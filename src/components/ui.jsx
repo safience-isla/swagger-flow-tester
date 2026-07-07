@@ -19,9 +19,10 @@ export function MethodBadge({ method }) {
 
 export function Modal({ open, onClose, title, children, maxWidth }) {
   if (!open) return null
+  // 배경 클릭으로 닫히지 않음 — 버튼(X/취소/확인 등)으로만 닫기
   return (
-    <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} style={maxWidth ? { maxWidth } : {}} onClick={e => e.stopPropagation()}>
+    <div className={styles.overlay}>
+      <div className={styles.modal} style={maxWidth ? { maxWidth } : {}}>
         <div className={styles.modal_head}>
           <div className={styles.modal_title}>{title}</div>
           <button className={styles.modal_close} onClick={onClose}>x</button>

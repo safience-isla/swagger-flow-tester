@@ -2,15 +2,16 @@ import { useState, useCallback } from 'react'
 import { useStore } from '../store'
 import { computeExecutionOrder, resolveTemplate } from '../flowUtils'
 import { normalizeUrl } from '../envUtils'
-import { Button, MethodBadge } from './ui'
+import { Button, MethodBadge, Modal, FormGroup, Input } from './ui'
 import styles from './RunPage.module.css'
 
 export default function RunPage({ onGoToFlow }) {
-  const { flowSteps, flowName, connections, getApiById, resolveEnvVars, saveFlow, setLastRunResponse, clearLastRunResponses } = useStore()
+  const { flowSteps, flowName, connections, getApiById, resolveEnvVars, saveFlow, setLastRunResponse, clearLastRunResponses, setModuleAuthValue } = useStore()
   const [results, setResults] = useState([])
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(0)
   const [expandedIdx, setExpandedIdx] = useState(null)
+  const [pausePrompt, setPausePrompt] = useState(null) // 실행 중 입력 대기: { stepName, method, path, params, resolve }
 
   const stats = {
     total: results.length,
@@ -48,12 +49,19 @@ export default function RunPage({ onGoToFlow }) {
       if (!prev) return undefined
       const rest = match[2]
       if (rest.startsWith('header.')) return prev.headers?.[rest.slice(7).toLowerCase()]
-      // 중첩 경로 지원: 'data.token' → body.data.token
+      // 중첩 경로 + 배열 필터: 'rows.0._id' / 'rows[saleStatus=ON_SALE]._id'
       const parts = rest.split('.')
       let val = prev.body
       for (const part of parts) {
         if (val == null || typeof val !== 'object') return undefined
-        val = val[part]
+        // 배열 필터 key[field=value] → 조건 맞는 첫 요소
+        const fm = part.match(/^(\w+)\[(\w+)=([^\]]+)\]$/)
+        if (fm) {
+          const arr = val[fm[1]]
+          val = Array.isArray(arr) ? arr.find(el => el && String(el[fm[2]]) === fm[3]) : undefined
+        } else {
+          val = val[part]
+        }
       }
       return val
     }
@@ -70,6 +78,49 @@ export default function RunPage({ onGoToFlow }) {
       if (!info) { apiResultIdx++; continue }
 
       const ri = apiResultIdx
+
+      // 실행 중 입력 대기: 빈 값 + 바인딩 없는 파라미터가 있으면 멈추고 사용자 입력을 받는다.
+      // (예: 로그인 confirm 스텝의 code — SMS 도착까지 기다렸다 입력)
+      let overrides = {}
+      // required 는 스텝이 아니라 api 정의(파싱된 swagger)에 있으므로 거기서 조회
+      const requiredKeys = new Set((info.api.params || []).filter(ap => ap.required).map(ap => ap.key))
+      // swagger 필수(required) 파라미터가 비어있고 바인딩도 없으면 멈추고 입력받는다.
+      const needsInput = step.params.some(
+        p => requiredKeys.has(p.key) && !p.binding && !p.items && String(p.val ?? '').trim() === '',
+      )
+      if (needsInput) {
+        setResults(prev => prev.map((r, idx) => idx === ri ? { ...r, status: 'paused' } : r))
+        const answer = await new Promise(resolve =>
+          setPausePrompt({
+            stepName: info.api.name,
+            method: info.api.method,
+            path: info.api.path,
+            params: step.params
+              .filter(p => !p.items)
+              .map(p => {
+                // 필수 항목만 스웨거 example 로 초기값 채움 (편집 가능). 선택 항목은 빈칸.
+                const required = requiredKeys.has(p.key)
+                const ex = info.api.requestExample?.[p.key]
+                const exStr = ex == null ? '' : typeof ex === 'object' ? JSON.stringify(ex) : String(ex)
+                return {
+                  key: p.key,
+                  bound: !!p.binding,
+                  binding: p.binding,
+                  required,
+                  value: (p.val ?? '') || (required ? exStr : ''),
+                }
+              }),
+            resolve,
+          }),
+        )
+        setPausePrompt(null)
+        if (answer === '__ABORT__') {
+          setResults(prev => prev.map((r, idx) => idx === ri ? { ...r, status: 'pending' } : r))
+          break
+        }
+        overrides = answer // { paramKey: 입력값 } (바인딩 없는 것만)
+      }
+
       setResults(prev => prev.map((r, idx) => idx === ri ? { ...r, status: 'running' } : r))
 
       // Resolve body params
@@ -90,9 +141,12 @@ export default function RunPage({ onGoToFlow }) {
             return v
           })
         } else {
-          let val = p.binding
-            ? (resolveBinding(p.binding) ?? p.val)
-            : resolveTemplate(p.val ?? '', resolveBinding)
+          // 실행 중 입력받은 값이 있으면 (바인딩 없는 파라미터) 그 값을 사용
+          const rawVal = !p.binding && overrides[p.key] !== undefined ? overrides[p.key] : p.val
+          let val
+          if (p.binding) val = resolveBinding(p.binding) ?? p.val
+          else if (typeof rawVal === 'string') val = resolveTemplate(rawVal, resolveBinding)
+          else val = rawVal // 리터럴 boolean/number 등 그대로 전송
           if (typeof val === 'string') {
             const t = val.trim()
             if (t.startsWith('[') || t.startsWith('{')) {
@@ -105,10 +159,20 @@ export default function RunPage({ onGoToFlow }) {
         }
       })
 
+      // page/pageSize 전역 기본값: 이 API 가 해당 파라미터를 갖고 값이 비었으면 1 / 20 적용
+      if ('page' in resolvedParams && (resolvedParams.page == null || resolvedParams.page === '')) resolvedParams.page = 1
+      if ('pageSize' in resolvedParams && (resolvedParams.pageSize == null || resolvedParams.pageSize === '')) resolvedParams.pageSize = 20
+
       // Priority: module auth < header-config boxes (in exec order) < step-specific headers
       const requestHeaders = {}
       ;(info.module.auths || []).forEach(a => {
-        if (a.key && a.val) requestHeaders[a.key] = a.val
+        if (!a.key || !a.val) return
+        let val = a.val
+        // Bearer 스킴 Authorization 이면 Bearer 접두어 자동 보정
+        if (a.key === 'Authorization' && (a.schemeType === 'http bearer' || a.hint === 'Bearer') && !val.toLowerCase().startsWith('bearer ')) {
+          val = 'Bearer ' + val
+        }
+        requestHeaders[a.key] = val
       })
       for (let j = 0; j < i; j++) {
         const prev = execOrder[j]
@@ -159,6 +223,16 @@ export default function RunPage({ onGoToFlow }) {
 
       resolvedResponses[i] = result.ok ? { body: result.body, headers: result.headers } : null
       if (result.ok) setLastRunResponse(step.id, result.body, result.headers)
+
+      // setAuth: 이 스텝 응답값을 모듈 전역 인증 헤더로 저장 (예: row.accessToken → Authorization)
+      if (result.ok && step.setAuth) {
+        for (const [hKey, path] of Object.entries(step.setAuth)) {
+          const parts = String(path).replace(/^\$\.?/, '').split('.')
+          let v = result.body
+          for (const part of parts) v = v == null ? undefined : v[part]
+          if (v != null) setModuleAuthValue(info.module.id, hKey, String(v))
+        }
+      }
       setProgress(Math.round(((ri + 1) / apiSteps.length) * 100))
       setResults(prev => prev.map((r, idx) =>
         idx === ri ? {
@@ -178,7 +252,7 @@ export default function RunPage({ onGoToFlow }) {
     }
 
     setRunning(false)
-  }, [flowSteps, connections, flowName, getApiById, resolveEnvVars, saveFlow, setLastRunResponse, clearLastRunResponses, running])
+  }, [flowSteps, connections, flowName, getApiById, resolveEnvVars, saveFlow, setLastRunResponse, clearLastRunResponses, setModuleAuthValue, running])
 
   return (
     <div className={styles.page}>
@@ -279,7 +353,45 @@ export default function RunPage({ onGoToFlow }) {
           )}
         </div>
       </div>
+
+      {pausePrompt && <PauseForm prompt={pausePrompt} />}
     </div>
+  )
+}
+
+// 실행 중 입력 대기 폼: 바인딩 없는 빈 파라미터를 사용자가 입력 → 계속.
+function PauseForm({ prompt }) {
+  const editable = prompt.params.filter(p => !p.bound)
+  const [vals, setVals] = useState(() =>
+    Object.fromEntries(editable.map(p => [p.key, p.value])),
+  )
+  const submit = () => prompt.resolve(vals)
+  const abort = () => prompt.resolve('__ABORT__')
+  return (
+    <Modal open onClose={abort} title={`입력 대기 · ${prompt.stepName}`}>
+      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14, fontFamily: 'monospace' }}>
+        {prompt.method} {prompt.path}
+      </div>
+      {prompt.params.map(p => (
+        <FormGroup key={p.key} label={p.bound ? `${p.key} · 자동 바인딩` : p.required ? `${p.key} · 필수` : p.key}>
+          {p.bound ? (
+            <div style={{ fontSize: 12, color: 'var(--text2)', fontFamily: 'monospace' }}>← {p.binding}</div>
+          ) : (
+            <Input
+              autoFocus={p.key === editable[0]?.key}
+              value={vals[p.key] ?? ''}
+              placeholder={`${p.key} 입력`}
+              onChange={e => setVals(v => ({ ...v, [p.key]: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') submit() }}
+            />
+          )}
+        </FormGroup>
+      ))}
+      <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+        <Button style={{ flex: 1 }} onClick={abort}>취소</Button>
+        <Button variant="primary" style={{ flex: 1 }} onClick={submit}>계속 →</Button>
+      </div>
+    </Modal>
   )
 }
 
@@ -319,7 +431,8 @@ function buildCurl(method, url, headers, body) {
 async function executeApi(baseUrl, api, params, extraHeaders = {}, options = {}) {
   const isBody = ['POST', 'PUT', 'PATCH'].includes(api.method)
   const path = api.path.replace(/{(\w+)}/g, (_, k) => encodeURIComponent(params[k] ?? `:${k}`))
-  const queryEntries = isBody ? [] : Object.entries(params).filter(([k]) => !api.path.includes(`{${k}}`))
+  // GET 쿼리: 값 없는 파라미터(null/undefined/빈문자열)는 아예 넣지 않음
+  const queryEntries = isBody ? [] : Object.entries(params).filter(([k, v]) => !api.path.includes(`{${k}}`) && v != null && v !== '')
   const query = queryEntries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')
   const url = baseUrl.replace(/\/$/, '') + path + (query ? '?' + query : '')
 

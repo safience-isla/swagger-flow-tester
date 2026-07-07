@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { resolveVars, normalizeUrl } from './envUtils'
 import { supabase } from './supabase'
+import { DEFAULT_FLOWS } from './defaultFlows'
 
 // ── Supabase sync helpers (fire-and-forget) ──────────────────────────────────
 function sbUpsertModule(m, cid) {
@@ -80,7 +81,7 @@ async function fetchSwaggerApis(baseUrl, moduleId) {
     }
   }
 
-  const candidates = ['/v3/api-docs', '/api-docs-json', '/v2/api-docs', '/api-docs', '/swagger.json']
+  const candidates = ['/v3/api-docs', '/api-docs-json', '/v2/api-docs', '/api-docs', '/swagger.json', '/api/app-docs-json']
   
   for (const path of candidates) {
     const url = cleanBase + path
@@ -325,24 +326,25 @@ function parseSwagger(data, moduleId = '') {
         const schema = resolveRef(p.schema, data) ?? p.schema ?? p
         const enums = schema?.enum ?? p.enum ?? null
         const type = schema?.type ?? p.type ?? null
-        return { key: p.name, ...(enums ? { enum: enums } : {}), ...(type ? { type } : {}) }
+        return { key: p.name, ...(enums ? { enum: enums } : {}), ...(type ? { type } : {}), ...(p.required ? { required: true } : {}) }
       })
       // body params from requestBody schema ($ref 해석 포함)
       const rawBodySchema = pickJsonContent(op.requestBody?.content)?.schema
       const bodySchema = resolveRef(rawBodySchema, data) ?? rawBodySchema
-      function pushBodyProp(k, propSchema) {
+      function pushBodyProp(k, propSchema, requiredList) {
         if (params.find(p => p.key === k)) return
         const resolved = resolveRef(propSchema, data) ?? propSchema
         const enums = resolved?.enum ?? null
         const type = resolved?.type ?? null
-        params.push({ key: k, ...(enums ? { enum: enums } : {}), ...(type ? { type } : {}) })
+        const required = Array.isArray(requiredList) && requiredList.includes(k)
+        params.push({ key: k, ...(enums ? { enum: enums } : {}), ...(type ? { type } : {}), ...(required ? { required: true } : {}) })
       }
       if (bodySchema?.properties) {
-        Object.entries(bodySchema.properties).forEach(([k, v]) => pushBodyProp(k, v))
+        Object.entries(bodySchema.properties).forEach(([k, v]) => pushBodyProp(k, v, bodySchema.required))
       } else if (bodySchema?.allOf) {
         for (const sub of bodySchema.allOf) {
           const resolved = resolveRef(sub, data) ?? sub
-          Object.entries(resolved.properties || {}).forEach(([k, v]) => pushBodyProp(k, v))
+          Object.entries(resolved.properties || {}).forEach(([k, v]) => pushBodyProp(k, v, resolved.required))
         }
       }
       apis.push({
@@ -452,6 +454,8 @@ export const useStore = create(
       },
 
       _loadCollectionData: async (cid, cachedSettings) => {
+        // 재시드 전 기존 모듈의 인증 헤더 값(로그인으로 받은 토큰 등)을 이름 기준으로 보존
+        const prevAuthsByName = new Map((get().modules || []).map(m => [m.name, m.auths || []]))
         const [modsRes, flowsRes, envsRes, settingsRes, presetsRes] = await Promise.all([
           supabase.from('modules').select('*').eq('collection_id', cid),
           supabase.from('saved_flows').select('*').eq('collection_id', cid),
@@ -496,6 +500,33 @@ export const useStore = create(
 
         set({ modules, savedFlows, envs, activeEnvId, apiPresets, supaStatus: 'ok',
           flowSteps: validFlowSteps, connections: validConnections })
+
+        // 기본 모듈 시드: 등록된 모듈이 없으면 현재 origin(= same-origin API 서버)을 자동 등록.
+        // dev(/flow-tester/)·로컬 어디서 열어도 window.location.origin 이 곧 API 호스트라 바로 연결됨.
+        // ponytail: origin 기반이라 하드코딩 없음. 다른 백엔드에 쓰려면 이 모듈을 지우거나 URL 수정.
+        if (modules.length === 0 && typeof window !== 'undefined' && window.location?.origin) {
+          await get().addModule('mobis-app', window.location.origin)
+          // 이전 세션의 인증 헤더 값(토큰) 복원 → 새로고침 후에도 전역 Authorization 유지
+          const seeded = get().modules.find(m => m.name === 'mobis-app')
+          const prevAuths = prevAuthsByName.get('mobis-app')
+          if (seeded && prevAuths) {
+            prevAuths.forEach(a => { if (a.key && a.val) get().setModuleAuthValue(seeded.id, a.key, a.val) })
+          }
+          get().seedDefaultFlows() // 모듈 apis 로드 후 기본 플로우(회원가입/로그인) 저장
+        }
+      },
+
+      // 기본 플로우(회원가입/로그인)를 저장된 플로우에 시드. 이미 있으면 건너뜀.
+      seedDefaultFlows: () => {
+        const existing = new Set(get().savedFlows.map(f => f.name))
+        const toSeed = DEFAULT_FLOWS.filter(f => !existing.has(f.data.name))
+        if (toSeed.length === 0) return
+        const prev = { steps: get().flowSteps, connections: get().connections, name: get().flowName }
+        for (const f of toSeed) {
+          const res = get().importFlow(f.data) // 현재 모듈 apis 기준으로 resolve → flowSteps 세팅
+          if (res?.ok) get().saveFlow(f.data.name)
+        }
+        set({ flowSteps: prev.steps, connections: prev.connections, flowName: prev.name }) // 빌더 원복
       },
 
       // ── Modules ───────────────────────────────────────────────────────────
@@ -603,6 +634,18 @@ export const useStore = create(
       },
       updateModuleAuth: (mid, idx, field, val) => {
         set(s => ({ modules: s.modules.map(m => m.id !== mid ? m : { ...m, auths: (m.auths || []).map((a, i) => i !== idx ? a : { ...a, [field]: val }) }) }))
+        sbUpsertModule(get().modules.find(m => m.id === mid), get().activeCollectionId)
+      },
+      // 모듈 전역 인증 헤더 값 설정 (key 있으면 갱신, 없으면 추가). 실행 중 setAuth 로 토큰 주입용.
+      setModuleAuthValue: (mid, key, val) => {
+        set(s => ({ modules: s.modules.map(m => {
+          if (m.id !== mid) return m
+          const auths = m.auths ? [...m.auths] : []
+          const i = auths.findIndex(a => a.key === key)
+          if (i >= 0) auths[i] = { ...auths[i], val }
+          else auths.push({ key, val })
+          return { ...m, auths }
+        }) }))
         sbUpsertModule(get().modules.find(m => m.id === mid), get().activeCollectionId)
       },
 
@@ -885,13 +928,29 @@ export const useStore = create(
             }
           }
 
+          // params: values(리터럴 기본값) + bind(이전 스텝 응답값 연결)
+          const params = api.params.map(p => ({
+            key: p.key,
+            val: item.values && p.key in item.values ? item.values[p.key] : '', // 리터럴 기본값(문자/불리언 등)
+            binding: null,
+          }))
+          if (item.bind) {
+            for (const [pKey, rawVal] of Object.entries(item.bind)) {
+              const binding = String(rawVal).replace(/\{\{(\w+)\}\}/g, (_, vName) => varRegistry[vName] ?? '')
+              const param = params.find(p => p.key === pKey)
+              if (param && binding) param.binding = binding
+            }
+          }
+
           const stepId = 's' + (Date.now() + idx)
           newSteps.push({
             id: stepId,
             mid: mod.id,
             aid: api.id,
-            params: api.params.map(p => ({ key: p.key, val: '', binding: null })),
+            params,
             reqHeaders,
+            // setAuth: 이 스텝 응답값을 모듈 전역 인증 헤더로 저장 (예: { Authorization: '$.row.accessToken' })
+            ...(item.setAuth ? { setAuth: item.setAuth } : {}),
             bodyMode: 'params',
             bodyRaw: '',
             x: 80 + idx * 340,

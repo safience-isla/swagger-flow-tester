@@ -18,12 +18,14 @@ function getResponseKeys(api) {
 }
 
 function flattenObject(obj, prefix = '', depth = 0) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj) || depth > 3) return {}
+  if (!obj || typeof obj !== 'object' || depth > 3) return {}
   const result = {}
-  for (const [k, v] of Object.entries(obj)) {
+  // 배열은 첫 요소를 인덱스 0 으로 펼침 → rows.0._id 형태로 바인딩 가능
+  const entries = Array.isArray(obj) ? (obj.length ? [['0', obj[0]]] : []) : Object.entries(obj)
+  for (const [k, v] of entries) {
     const key = prefix ? `${prefix}.${k}` : k
     result[key] = v
-    if (v && typeof v === 'object' && !Array.isArray(v) && depth < 3)
+    if (v && typeof v === 'object' && depth < 3)
       Object.assign(result, flattenObject(v, key, depth + 1))
   }
   return result
@@ -102,6 +104,7 @@ export default function FlowBuilder({ onRun }) {
   const [panelTab, setPanelTab]         = useState('params')
   const [filterModule, setFilterModule] = useState('all')
   const [searchQuery, setSearchQuery]   = useState('')
+  const [expandedLibGroups, setExpandedLibGroups] = useState({}) // API 라이브러리 태그 그룹 접기 상태
   const [bindModal, setBindModal]       = useState(null)
   const [hbStep, setHbStep]             = useState(1)
   const [hbName, setHbName]             = useState('')
@@ -483,20 +486,47 @@ export default function FlowBuilder({ onRun }) {
             </div>
           </div>
           {filteredModules.length === 0 && <div className={styles.lib_empty}>검색 결과 없음</div>}
-          {filteredModules.map(mod => (
-            <div key={mod.id} className={styles.lib_section}>
-              <div className={styles.lib_mod_label}>{mod.name}</div>
-              {mod.apis.map(api => (
-                <div key={api.id} className={styles.lib_item} draggable onDragStart={e => onChipDragStart(e, mod.id, api.id)}>
-                  <MethodBadge method={api.method} />
-                  <div className={styles.lib_info}>
-                    <div className={styles.lib_name}>{api.name}</div>
-                    <div className={styles.lib_path}>{api.path}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
+          {filteredModules.map(mod => {
+            // swagger 태그별로 그룹핑
+            const groups = {}
+            mod.apis.forEach(api => {
+              const tag = api.tags?.[0] || '기타'
+              ;(groups[tag] || (groups[tag] = [])).push(api)
+            })
+            const searching = !!searchQuery.trim()
+            return (
+              <div key={mod.id} className={styles.lib_section}>
+                <div className={styles.lib_mod_label}>{mod.name}</div>
+                {Object.entries(groups).map(([tag, apis]) => {
+                  const gkey = mod.id + '|' + tag
+                  const open = searching || !!expandedLibGroups[gkey] // 검색 중엔 자동 펼침
+                  const desc = mod.tagMeta?.[tag]
+                  return (
+                    <div key={tag}>
+                      <div
+                        onClick={() => setExpandedLibGroups(p => ({ ...p, [gkey]: !p[gkey] }))}
+                        title={desc || tag}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text2)', userSelect: 'none' }}
+                      >
+                        <span style={{ fontSize: 9, color: 'var(--text3)', width: 10 }}>{open ? '▼' : '▶'}</span>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tag}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text3)', background: 'var(--sand)', borderRadius: 8, padding: '0 6px' }}>{apis.length}</span>
+                      </div>
+                      {open && apis.map(api => (
+                        <div key={api.id} className={styles.lib_item} draggable onDragStart={e => onChipDragStart(e, mod.id, api.id)}>
+                          <MethodBadge method={api.method} />
+                          <div className={styles.lib_info}>
+                            <div className={styles.lib_name}>{api.name}</div>
+                            <div className={styles.lib_path}>{api.path}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
         </div>
 
         {/* ── Canvas ── */}
@@ -566,8 +596,8 @@ export default function FlowBuilder({ onRun }) {
                     selected={selectedId === step.id}
                     onClick={e => { e.stopPropagation(); setSelectedId(step.id) }}
                     onRemove={e => { e.stopPropagation(); removeFlowStep(idx); if (selectedId === step.id) setSelectedId(null) }}
-                    onHeaderDown={onNodeHeaderDown}
-                    onTouchStart={onNodeHeaderDown}
+                    onHeaderDown={e => onNodeHeaderDown(e, step)}
+                    onTouchStart={e => onNodeHeaderDown(e, step)}
                     onPortOutDown={e => onPortOutDown(e, step)}
                     onPortInDown={e => onPortInDown(e, step)}
                     onPortInEnter={() => { hoverPortRef.current = step.id }}
@@ -827,8 +857,8 @@ function ImportModal({ modules, tab, onTabChange, formName, onFormName, formStep
   function updateUse(idx, ui, f, v){ updateStep(idx, { use: formSteps[idx].use.map((u, i) => i === ui ? { ...u, [f]: v } : u) }) }
 
   return (
-    <div className={styles.import_overlay} onClick={onClose}>
-      <div className={styles.import_modal} onClick={e => e.stopPropagation()}>
+    <div className={styles.import_overlay}>
+      <div className={styles.import_modal}>
         {/* Header */}
         <div className={styles.import_head}>
           <span className={styles.import_title}>플로우 가져오기</span>

@@ -82,8 +82,9 @@ export default function RunPage({ onGoToFlow }) {
       // 실행 중 입력 대기: 빈 값 + 바인딩 없는 파라미터가 있으면 멈추고 사용자 입력을 받는다.
       // (예: 로그인 confirm 스텝의 code — SMS 도착까지 기다렸다 입력)
       let overrides = {}
-      // required 는 스텝이 아니라 api 정의(파싱된 swagger)에 있으므로 거기서 조회
+      // required / type 은 스텝이 아니라 api 정의(파싱된 swagger)에 있으므로 거기서 조회
       const requiredKeys = new Set((info.api.params || []).filter(ap => ap.required).map(ap => ap.key))
+      const apiParamType = (key) => (info.api.params || []).find(ap => ap.key === key)?.type
       // swagger 필수(required) 파라미터가 비어있고 바인딩도 없으면 멈추고 입력받는다.
       const needsInput = step.params.some(
         p => requiredKeys.has(p.key) && !p.binding && !p.items && String(p.val ?? '').trim() === '',
@@ -149,10 +150,16 @@ export default function RunPage({ onGoToFlow }) {
           else val = rawVal // 리터럴 boolean/number 등 그대로 전송
           if (typeof val === 'string') {
             const t = val.trim()
+            const ty = apiParamType(p.key)
             if (t.startsWith('[') || t.startsWith('{')) {
               try { val = JSON.parse(t) } catch {}
             } else if (t === '') {
               val = null
+            } else if ((ty === 'integer' || ty === 'number') && !isNaN(Number(t))) {
+              // swagger 타입이 숫자면 숫자로 변환 (전화번호 등 string 타입은 그대로 유지)
+              val = Number(t)
+            } else if (ty === 'boolean' && (t === 'true' || t === 'false')) {
+              val = t === 'true'
             }
           }
           resolvedParams[p.key] = val

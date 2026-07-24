@@ -6,6 +6,7 @@ import SavedFlows from './components/SavedFlows'
 import RunPage from './components/RunPage'
 import EnvPage from './components/EnvPage'
 import HomePage from './components/HomePage'
+import SocialLoginPage from './components/SocialLoginPage'
 import { Button, Modal, FormGroup, Input, Toast } from './components/ui'
 import styles from './App.module.css'
 
@@ -130,6 +131,7 @@ export default function App() {
     { id: 'saved',   label: '저장된 플로우', icon: <SaveIcon />,  badge: savedFlows.length || null },
     { id: 'run',     label: '실행 결과', icon: <PlayIcon />, badge: null },
     { id: 'env',     label: '환경변수', icon: <EnvIcon />, badge: activeEnvName },
+    { id: 'social',  label: '소셜 로그인', icon: <PlayIcon />, badge: null },
   ]
 
   return (
@@ -236,6 +238,7 @@ export default function App() {
         {page === 'saved'   && <SavedFlows onLoad={handleLoad} onRun={handleRunSaved} />}
         {page === 'run'     && <RunPage onGoToFlow={() => setPage('flow')} />}
         {page === 'env'     && <EnvPage />}
+        {page === 'social'  && <SocialLoginPage />}
       </main>
 
       {/* Save modal */}

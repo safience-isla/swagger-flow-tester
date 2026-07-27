@@ -228,7 +228,9 @@ export default function RunPage({ onGoToFlow }) {
       }
       const elapsed = Math.round(performance.now() - start)
 
-      resolvedResponses[i] = result.ok ? { body: result.body, headers: result.headers } : null
+      // 바인딩의 stepN 은 'API 스텝' 순번(header-config 제외)이므로 실행순서 i 가 아니라
+      // API 스텝 카운터 ri 로 저장해야 한다. (앞에 헤더 설정 블록이 있으면 i≠ri → step 참조가 밀림)
+      resolvedResponses[ri] = result.ok ? { body: result.body, headers: result.headers } : null
       if (result.ok) setLastRunResponse(step.id, result.body, result.headers)
 
       // setAuth: 이 스텝 응답값을 모듈 전역 인증 헤더로 저장 (예: row.accessToken → Authorization)

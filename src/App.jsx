@@ -98,18 +98,16 @@ export default function App() {
     if (supaStatus === 'ok') consumePendingToken()
     // 다른 탭에서 착지한 경우(현재 탭에 flow-tester 가 열려 있음) 즉시 반영
     function onStorage(e) { if (e.key === 'ft:pendingToken' && e.newValue) consumePendingToken() }
-    // 같은 탭에서 OAuth 로 이동했다가 복귀한 경우: bfcache 로 복원되면 리마운트가 없어 위 mount
-    // consume 이 안 돌고, storage 이벤트도 (자기 탭이라) 안 온다 → 복귀 시점에 재소비한다.
-    // (멱등: pendingToken 이 없으면 consumePendingToken 이 즉시 return)
-    function onReturn() { if (supaStatus === 'ok') consumePendingToken() }
-    function onVisible() { if (document.visibilityState === 'visible') onReturn() }
+    // 같은 탭에서 OAuth 로 다녀온 뒤 '뒤로가기' 하면 bfcache 로 로그인 전 옛 스냅샷(옛 토큰)이
+    // 리마운트 없이 복원되고, persist 미들웨어가 그 옛 상태를 localStorage 에 다시 덮어써
+    // 방금 받은 새 토큰이 유실된다. bfcache 복원(persisted) 시엔 새로고침으로 최신 persist 상태 +
+    // pending 토큰을 다시 적재해 옛 스냅샷이 이기는 것을 막는다.
+    function onPageShow(e) { if (e.persisted) window.location.reload() }
     window.addEventListener('storage', onStorage)
-    window.addEventListener('pageshow', onReturn)
-    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('pageshow', onPageShow)
     return () => {
       window.removeEventListener('storage', onStorage)
-      window.removeEventListener('pageshow', onReturn)
-      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('pageshow', onPageShow)
     }
   }, [supaStatus, moduleCount, applyAuthToken, showToast])
 

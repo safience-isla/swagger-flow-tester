@@ -41,7 +41,8 @@ export default function SocialLoginPage() {
     return ''
   })
   const [token, setToken] = useState(appliedToken)
-  useEffect(() => { if (appliedToken) setToken(t => t || appliedToken) }, [appliedToken])
+  // 최신 적용 토큰을 따라간다. (이전엔 t||appliedToken 이라 한 번 차면 새 토큰으로 갱신되지 않았음)
+  useEffect(() => { if (appliedToken) setToken(appliedToken) }, [appliedToken])
   const [reason, setReason] = useState('NO_LONGER_NEED_DIGITAL_KEY')
   const [busy, setBusy] = useState(false)
   const [log, setLog] = useState([])

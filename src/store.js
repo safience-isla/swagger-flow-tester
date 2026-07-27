@@ -648,6 +648,34 @@ export const useStore = create(
         }) }))
         sbUpsertModule(get().modules.find(m => m.id === mid), get().activeCollectionId)
       },
+      // 소셜 로그인 등으로 받은 accessToken 을 대상 모듈의 전역 Authorization 으로 반영.
+      // raw 토큰 원문 저장(Bearer 는 실행 시 RunPage 가 부착) → 빌더·저장된 플로우 모든 스텝에 자동 적용.
+      // 대상 = origin 이 앱과 같은 모듈(없으면 전체). hint/schemeType 명시로 Bearer 부착 보장.
+      // 반환: 적용된 모듈 수. 0 이면 아직 모듈이 없음 → 호출측이 pending 토큰을 유지하고 재시도해야 함.
+      applyAuthToken: (rawToken) => {
+        if (!rawToken) return 0
+        const token = String(rawToken).replace(/^Bearer\s+/i, '')
+        const appOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+        const sameOrigin = (m) => {
+          try { return new URL(normalizeUrl(get().resolveEnvVars(m.url))).origin === appOrigin }
+          catch { return false }
+        }
+        let targets = get().modules.filter(sameOrigin)
+        if (targets.length === 0) targets = get().modules
+        if (targets.length === 0) return 0 // 모듈이 아직 로드/시드되지 않음
+        const targetIds = new Set(targets.map(t => t.id))
+        set(s => ({ modules: s.modules.map(m => {
+          if (!targetIds.has(m.id)) return m
+          const auths = m.auths ? [...m.auths] : []
+          const patch = { key: 'Authorization', val: token, hint: 'Bearer', schemeType: 'http bearer' }
+          const i = auths.findIndex(a => a.key === 'Authorization')
+          if (i >= 0) auths[i] = { ...auths[i], ...patch }
+          else auths.push(patch)
+          return { ...m, auths }
+        }) }))
+        targetIds.forEach(id => sbUpsertModule(get().modules.find(m => m.id === id), get().activeCollectionId))
+        return targetIds.size
+      },
 
       // ── Environments ──────────────────────────────────────────────────────
       envs: [],

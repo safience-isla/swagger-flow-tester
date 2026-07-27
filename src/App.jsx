@@ -41,7 +41,8 @@ export default function App() {
 
   const { flowSteps, flowName, setFlowName, savedFlows, saveFlow, loadFlow, clearFlow, envs, activeEnvId, supaStatus, hydrateFromSupabase,
     collections, activeCollectionId, addCollection, deleteCollection, renameCollection, switchCollection,
-    theme, setTheme } = useStore()
+    theme, setTheme, applyAuthToken } = useStore()
+  const moduleCount = useStore(s => s.modules.length) // 브릿지 재시도 트리거(모듈 시드 완료 감지)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -73,6 +74,33 @@ export default function App() {
     setToast({ msg, visible: true })
     setTimeout(() => setToast(t => ({ ...t, visible: false })), 2200)
   }, [])
+
+  // 소셜 로그인 브릿지: oauth-result.html 이 localStorage['ft:pendingToken'] 에 남긴 accessToken 을
+  // 읽어 module auth 로 반영 → 모든 플로우에 자동 적용. 적용에 성공한 뒤에만 키를 지운다(1회성).
+  // 모듈이 아직 시드/로드되기 전이면 applyAuthToken 이 0 을 반환 → 키를 유지하고, moduleCount 가
+  // 늘어나 이 effect 가 재실행될 때 다시 시도한다(하이드레이션/시드 순서 경합 방지).
+  useEffect(() => {
+    function consumePendingToken() {
+      let raw
+      try { raw = localStorage.getItem('ft:pendingToken') } catch { return }
+      if (!raw) return
+      let data
+      try { data = JSON.parse(raw) } catch { data = { accessToken: raw } }
+      if (!data?.accessToken) {
+        try { localStorage.removeItem('ft:pendingToken') } catch { /* 무시 */ }
+        return
+      }
+      const applied = applyAuthToken(data.accessToken)
+      if (!applied) return // 모듈이 아직 없음 → 키 유지, 모듈 로드되면 재시도
+      try { localStorage.removeItem('ft:pendingToken') } catch { /* 무시 */ }
+      showToast(`${data.provider ? data.provider + ' ' : ''}토큰 적용됨 — 모든 플로우에 자동 사용`)
+    }
+    if (supaStatus === 'ok') consumePendingToken()
+    // 다른 탭에서 착지한 경우(현재 탭에 flow-tester 가 열려 있음) 즉시 반영
+    function onStorage(e) { if (e.key === 'ft:pendingToken' && e.newValue) consumePendingToken() }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [supaStatus, moduleCount, applyAuthToken, showToast])
 
   function handleSave() {
     if (flowSteps.length === 0) { showToast('저장할 스텝이 없습니다'); return }

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useStore } from '../store'
 import styles from './SocialLoginPage.module.css'
 
 // 서버가 OAuth 핸드셰이크 전체를 소유(redirect-callback). 이 페이지는 '개시'만 한다:
@@ -31,7 +32,16 @@ export default function SocialLoginPage() {
   const [pushToken, setPushToken] = useState('flow-tester')
   const [appVersion, setAppVersion] = useState('1.0.0')
   const [agreeAll, setAgreeAll] = useState(true)
-  const [token, setToken] = useState('') // 연동/탈퇴/해제용 accessToken (착지 페이지에서 복사)
+  // 연동/탈퇴/해제용 accessToken. 소셜 로그인 브릿지가 module auth 에 반영한 토큰을 자동 프리필(원문, Bearer 제외).
+  const appliedToken = useStore(s => {
+    for (const m of s.modules) {
+      const a = (m.auths || []).find(x => x.key === 'Authorization' && x.val)
+      if (a) return String(a.val).replace(/^Bearer\s+/i, '')
+    }
+    return ''
+  })
+  const [token, setToken] = useState(appliedToken)
+  useEffect(() => { if (appliedToken) setToken(t => t || appliedToken) }, [appliedToken])
   const [reason, setReason] = useState('NO_LONGER_NEED_DIGITAL_KEY')
   const [busy, setBusy] = useState(false)
   const [log, setLog] = useState([])
@@ -64,6 +74,8 @@ export default function SocialLoginPage() {
   // 2/3) 연동(link)·탈퇴(withdraw) — Bearer 필요. 콜백에서 재-OAuth 본인확인 후 처리.
   async function sessionStart(provider, mode) {
     if (!token) return push('accessToken 필요 — 먼저 가입/로그인 후 착지 페이지에서 복사')
+    // 탈퇴는 계정 완전 삭제(하드 딜리트) → 오클릭 방지 confirm 게이트
+    if (mode === 'withdraw' && !window.confirm(`⚠️ 회원 탈퇴\n\n${provider.toUpperCase()} 본인확인 후 계정·차량·키셰어가 완전 삭제됩니다. 되돌릴 수 없어요.\n\n정말 진행할까요? (연동만 끊으려면 취소 → '4. 연동 해제' 사용)`)) return
     setBusy(true)
     try {
       const body = mode === 'withdraw' ? { mode, reason } : { mode }
@@ -91,10 +103,10 @@ export default function SocialLoginPage() {
     }
   }
 
-  const snsBtns = (onClick) =>
+  const snsBtns = (onClick, danger) =>
     PROVIDERS.map((p) => (
-      <button key={p} className={`${styles.sns} ${styles[p]}`} disabled={busy} onClick={() => onClick(p)}>
-        {p.toUpperCase()}
+      <button key={p} className={`${styles.sns} ${danger ? styles.danger : styles[p]}`} disabled={busy} onClick={() => onClick(p)}>
+        {danger ? `${p.toUpperCase()} 탈퇴` : p.toUpperCase()}
       </button>
     ))
 
@@ -132,11 +144,12 @@ export default function SocialLoginPage() {
       </section>
 
       <section className={styles.card}>
-        <div className={styles.step}>3. 회원 탈퇴 (withdraw — 연결된 provider로 본인확인)</div>
+        <div className={styles.step}>⚠️ 3. 회원 탈퇴 (withdraw — 계정 완전 삭제, 되돌릴 수 없음)</div>
         <div className={styles.row}>
           <input className={styles.in} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="탈퇴 사유(reason)" />
         </div>
-        <div className={styles.btnRow} style={{ marginTop: 10 }}>{snsBtns((p) => sessionStart(p, 'withdraw'))}</div>
+        <div className={styles.btnRow} style={{ marginTop: 10 }}>{snsBtns((p) => sessionStart(p, 'withdraw'), true)}</div>
+        <div className={styles.mono}>* 연동만 끊으려면 아래 &apos;4. 연동 해제&apos; 사용. 이 버튼은 회원 자체를 삭제합니다.</div>
       </section>
 
       <section className={styles.card}>

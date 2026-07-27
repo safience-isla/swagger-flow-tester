@@ -27,4 +27,40 @@ export const DEFAULT_FLOWS = [
       ],
     },
   },
+
+  // ── 회원번호(memberNo) 키 공유 테스트 ─────────────────────────────────────────
+  // 공유는 '공유자 A'가 만들고 '수신자 B'가 수락하는 2인 시나리오다. 전역 Authorization 은
+  // 소셜 로그인 1개뿐이라 한 플로우에 두 계정을 담을 수 없어 2개로 나눈다:
+  //   1) 공유자 A 로그인 → '회원번호 공유 — 공유자(생성)' 실행
+  //   2) 수신자 B 로그인 → '회원번호 공유 — 수신자(수락)' 실행
+  {
+    label: '회원번호 공유 — 공유자(생성)',
+    data: {
+      name: '회원번호 공유 — 공유자(생성)',
+      flow: [
+        // 공유자 A(차량 소유자)로 로그인한 상태에서 실행.
+        // shareType/isRequireAccept 는 고정, carId 는 필수라 실행 시 입력창이 뜬다
+        // → 그 창에서 carId·keyId·memberNo(수신자 회원번호)를 함께 입력한다.
+        {
+          api: '디지털 키 공유 생성',
+          values: { shareType: 'MEMBER_NO', isRequireAccept: true, isRequireApproval: false },
+        },
+        // 생성 확인 — 내가 공유한 목록에 방금 건이 WAITING_ACCEPT 로 떠야 함
+        { api: '내가 공유한 키 공유 목록 조회' },
+      ],
+    },
+  },
+  {
+    label: '회원번호 공유 — 수신자(수락)',
+    data: {
+      name: '회원번호 공유 — 수신자(수락)',
+      flow: [
+        // 수신자 B로 로그인한 상태에서 실행.
+        // 받은 목록에서 수락 대기(WAITING_ACCEPT) 건의 keyShareId 를 뽑아 (배열 필터 바인딩)
+        { api: '내가 받은 키 공유 목록 조회', save: { keyShareId: '$.row[status=WAITING_ACCEPT]._id' } },
+        // 그 keyShareId 로 수락 → SHARED 로 전환
+        { api: '공유 수락 (수신자)', bind: { keyShareId: '{{keyShareId}}' } },
+      ],
+    },
+  },
 ]

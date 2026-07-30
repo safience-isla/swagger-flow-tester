@@ -96,18 +96,12 @@ export default function App() {
       showToast(`${data.provider ? data.provider + ' ' : ''}토큰 적용됨 — 모든 플로우에 자동 사용`)
     }
     if (supaStatus === 'ok') consumePendingToken()
-    // 다른 탭에서 착지한 경우(현재 탭에 flow-tester 가 열려 있음) 즉시 반영
+    // OAuth 는 새 창에서 진행되므로 메인 탭은 언로드되지 않는다. 착지 페이지(oauth-result.html)가
+    // 같은 origin localStorage 에 남긴 ft:pendingToken 을 storage 이벤트로 받아 라이브 상태에 즉시 반영.
     function onStorage(e) { if (e.key === 'ft:pendingToken' && e.newValue) consumePendingToken() }
-    // 같은 탭에서 OAuth 로 다녀온 뒤 '뒤로가기' 하면 bfcache 로 로그인 전 옛 스냅샷(옛 토큰)이
-    // 리마운트 없이 복원되고, persist 미들웨어가 그 옛 상태를 localStorage 에 다시 덮어써
-    // 방금 받은 새 토큰이 유실된다. bfcache 복원(persisted) 시엔 새로고침으로 최신 persist 상태 +
-    // pending 토큰을 다시 적재해 옛 스냅샷이 이기는 것을 막는다.
-    function onPageShow(e) { if (e.persisted) window.location.reload() }
     window.addEventListener('storage', onStorage)
-    window.addEventListener('pageshow', onPageShow)
     return () => {
       window.removeEventListener('storage', onStorage)
-      window.removeEventListener('pageshow', onPageShow)
     }
   }, [supaStatus, moduleCount, applyAuthToken, showToast])
 

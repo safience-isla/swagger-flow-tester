@@ -63,4 +63,51 @@ export const DEFAULT_FLOWS = [
       ],
     },
   },
+
+  // ── 차량 등록 → 디지털 키 등록 → 공유 (순서대로 실행) ─────────────────────────
+  // 로그인 상태에서 실행. 1 → 2 → 3 순으로 돌리면 등록·키·공유가 이어진다.
+  {
+    // 마스터차량 옵션(브랜드→모델→연식→색상variant)을 단계별로 조회해 첫 옵션을 자동 선택 → 차량 등록.
+    // 옵션 응답은 envelope 없이 { selected, availableOptions } 원형. 등록 스텝에서 vehicleNumber 입력창이 뜬다.
+    label: '차량 등록',
+    data: {
+      name: '차량 등록',
+      flow: [
+        { api: '통합 차량 옵션 조회 API', save: { brandId: '$.availableOptions.brands.0._id' } },
+        { api: '통합 차량 옵션 조회 API', bind: { brandId: '{{brandId}}' }, save: { modelId: '$.availableOptions.models.0.modelId' } },
+        { api: '통합 차량 옵션 조회 API', bind: { brandId: '{{brandId}}', modelId: '{{modelId}}' }, save: { yearId: '$.availableOptions.years.0._id' } },
+        { api: '통합 차량 옵션 조회 API', bind: { brandId: '{{brandId}}', modelId: '{{modelId}}', yearId: '{{yearId}}' }, save: { carVariantId: '$.availableOptions.colors.0.variantId' } },
+        // carVariantId 자동 바인딩. vehicleNumber(필수)는 비어 있어 실행 중 입력창이 뜬다.
+        { api: '차량 등록', bind: { carVariantId: '{{carVariantId}}' }, save: { carId: '$.row._id' } },
+      ],
+    },
+  },
+  {
+    // 내 차량 목록에서 첫 차량을 골라 그 carId 로 디지털 키 등록. deviceNumber(MAC, 필수)는 실행 중 입력.
+    label: '디지털 키 등록',
+    data: {
+      name: '디지털 키 등록',
+      flow: [
+        { api: '차량 목록 조회', save: { carId: '$.rows.0._id' } },
+        { api: '고객 디지털 키 등록', bind: { carId: '{{carId}}' } },
+      ],
+    },
+  },
+  {
+    // 차량 목록에서 _id 선택 → 상세 조회로 digitalKey(keyId) 추출 → 회원번호 공유.
+    // 공유 스텝은 shareType(필수)이 비어 있어 입력창이 뜨고 example 로 MEMBER_NO 가 채워짐 → memberNo(수신자)만 입력.
+    label: '디지털키 공유',
+    data: {
+      name: '디지털키 공유',
+      flow: [
+        { api: '차량 목록 조회', save: { carId: '$.rows.0._id' } },
+        { api: '차량 상세 조회', bind: { id: '{{carId}}' }, save: { keyId: '$.row.digitalKey.digitalKeyId' } },
+        {
+          api: '디지털 키 공유 생성',
+          bind: { carId: '{{carId}}', keyId: '{{keyId}}' },
+          values: { isRequireAccept: true, isRequireApproval: false },
+        },
+      ],
+    },
+  },
 ]

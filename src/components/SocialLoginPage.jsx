@@ -24,8 +24,17 @@ async function post(path, body, token) {
   return { status: res.status, json }
 }
 
-function launch(provider, state) {
-  window.location.href = `${API}${V5}/oauth/providers/${provider}?state=${encodeURIComponent(state)}`
+// OAuth 는 새 창(팝업)에서 진행한다. 같은 탭 이동이면 flow-tester SPA 가 언로드되고,
+// 복귀 시 bfcache 옛 스냅샷(옛 토큰)이 새 토큰을 덮어쓰는 경합이 생김. 새 창이면 메인 탭은
+// 그대로 살아있어, oauth-result.html 이 남긴 ft:pendingToken 을 storage 이벤트로 즉시 반영한다.
+// 팝업 차단 회피: 클릭 제스처 시점에 동기로 빈 창을 열고, async 완료 후 URL 을 주입한다.
+function openOAuthPopup() {
+  return window.open('about:blank', '_blank', 'width=520,height=760')
+}
+function launch(provider, state, win) {
+  const url = `${API}${V5}/oauth/providers/${provider}?state=${encodeURIComponent(state)}`
+  if (win && !win.closed) win.location.href = url
+  else window.open(url, '_blank') // 팝업이 차단된 경우 폴백(차단되면 사용자가 허용해야 함)
 }
 
 export default function SocialLoginPage() {
@@ -43,6 +52,12 @@ export default function SocialLoginPage() {
   const [token, setToken] = useState(appliedToken)
   // 최신 적용 토큰을 따라간다. (이전엔 t||appliedToken 이라 한 번 차면 새 토큰으로 갱신되지 않았음)
   useEffect(() => { if (appliedToken) setToken(appliedToken) }, [appliedToken])
+  const clearAuthToken = useStore((s) => s.clearAuthToken)
+  function handleClearToken() {
+    const n = clearAuthToken()
+    setToken('')
+    push(n ? `저장된 accessToken 삭제됨 — 모든 플로우에서 제거(모듈 ${n}개)` : '삭제할 accessToken 없음')
+  }
   const [reason, setReason] = useState('NO_LONGER_NEED_DIGITAL_KEY')
   const [busy, setBusy] = useState(false)
   const [log, setLog] = useState([])
@@ -51,6 +66,7 @@ export default function SocialLoginPage() {
   // 1) 가입/로그인 (public) — 최초=가입(회원번호 발급), 재호출=로그인
   async function authStart(provider) {
     setBusy(true)
+    const win = openOAuthPopup() // 클릭 제스처 내 동기 오픈(팝업 차단 회피)
     try {
       let agreementIds = []
       if (agreeAll) {
@@ -63,10 +79,11 @@ export default function SocialLoginPage() {
       const r = await post(`${V5}/oauth/state/auth`, { pushToken, appVersion, agreementIds })
       const state = r.json?.row?.state
       if (r.status !== 200 || !state) {
+        win?.close()
         return push(`state/auth 오류 ${r.status}: ${r.json?.message || 'OAUTH_STATE_SECRET 미설정?'}`)
       }
-      push(`${provider} 개시 → 실 로그인 후 oauth-result.html 착지`)
-      launch(provider, state)
+      push(`${provider} 개시 → 새 창에서 실 로그인 후 oauth-result.html 착지(토큰 자동 반영)`)
+      launch(provider, state, win)
     } finally {
       setBusy(false)
     }
@@ -78,15 +95,17 @@ export default function SocialLoginPage() {
     // 탈퇴는 계정 완전 삭제(하드 딜리트) → 오클릭 방지 confirm 게이트
     if (mode === 'withdraw' && !window.confirm(`⚠️ 회원 탈퇴\n\n${provider.toUpperCase()} 본인확인 후 계정·차량·키셰어가 완전 삭제됩니다. 되돌릴 수 없어요.\n\n정말 진행할까요? (연동만 끊으려면 취소 → '4. 연동 해제' 사용)`)) return
     setBusy(true)
+    const win = openOAuthPopup() // 클릭 제스처 내 동기 오픈(팝업 차단 회피)
     try {
       const body = mode === 'withdraw' ? { mode, reason } : { mode }
       const r = await post(`${V5}/oauth/state/session`, body, token)
       const state = r.json?.row?.state
       if (r.status !== 200 || !state) {
+        win?.close()
         return push(`state/session(${mode}) 오류 ${r.status}: ${r.json?.message || ''}`)
       }
-      push(`${mode} 개시(${provider}) → 실 로그인 후 착지 (linked/withdrawn)`)
-      launch(provider, state)
+      push(`${mode} 개시(${provider}) → 새 창에서 실 로그인 후 착지 (linked/withdrawn)`)
+      launch(provider, state, win)
     } finally {
       setBusy(false)
     }
@@ -136,7 +155,14 @@ export default function SocialLoginPage() {
         <div className={styles.step}>accessToken (연동/탈퇴/해제용 — 착지 페이지에서 복사)</div>
         <div className={styles.row}>
           <input className={styles.in} value={token} onChange={(e) => setToken(e.target.value)} placeholder="Bearer 없이 accessToken 원문" />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleClearToken}
+            style={{ padding: '0 14px', borderRadius: 8, border: '1px solid var(--border, #d9d2f7)', background: 'transparent', color: 'var(--text2, #8a8398)', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}
+          >토큰 삭제</button>
         </div>
+        <div className={styles.mono}>* 저장된 전역 Authorization 을 비웁니다(모든 플로우에서 제거). 재로그인하면 새 토큰이 자동 반영됩니다.</div>
       </section>
 
       <section className={styles.card}>

@@ -677,6 +677,24 @@ export const useStore = create(
         return targetIds.size
       },
 
+      // 저장된 전역 Authorization 토큰 삭제(로그아웃). 모든 모듈 auth 의 Authorization 값을 비우고
+      // Supabase/localStorage 에 반영 + 브릿지 pending 토큰도 제거. 반환: 값을 지운 모듈 수.
+      clearAuthToken: () => {
+        const ids = []
+        set(s => ({ modules: s.modules.map(m => {
+          const auths = m.auths || []
+          const i = auths.findIndex(a => a.key === 'Authorization' && a.val)
+          if (i < 0) return m
+          ids.push(m.id)
+          const next = [...auths]
+          next[i] = { ...next[i], val: '' }
+          return { ...m, auths: next }
+        }) }))
+        ids.forEach(id => sbUpsertModule(get().modules.find(m => m.id === id), get().activeCollectionId))
+        try { localStorage.removeItem('ft:pendingToken') } catch { /* 무시 */ }
+        return ids.length
+      },
+
       // ── Environments ──────────────────────────────────────────────────────
       envs: [],
       activeEnvId: null,

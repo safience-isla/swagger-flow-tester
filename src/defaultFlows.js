@@ -169,18 +169,24 @@ export const DEFAULT_FLOWS = [
   },
   {
     // 배송완료(DELIVERED) 라인만 신청 가능하다.
-    // ⚠️ items[].orderItemId 는 앱 주문 상세 응답에 없어서 자동 바인딩이 안 된다 → 실행 중 직접 입력.
+    // 주문 상세의 items[0].orderItemId 를 그대로 신청에 넘긴다.
     label: '주문 — 반품/교환 신청→취소',
     data: {
       name: '주문 — 반품/교환 신청→취소',
       flow: [
         { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId' } },
-        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' }, save: { orderItemId: '$.row.items.0.orderItemId' } },
         {
           api: '반품/교환 신청',
           bind: { orderId: '{{orderId}}' },
-          values: { resolutionType: 'RETURN', reasonCode: 'DAMAGED', reasonText: '파손되어 도착' },
-          save: { claimId: '$.row.claimId' },
+          values: {
+            resolutionType: 'RETURN',
+            reasonCode: 'DAMAGED',
+            reasonText: '파손되어 도착',
+            items: [{ orderItemId: '{{orderItemId}}', quantity: 1 }],
+          },
+          // 응답은 claimIds(배열) 이다
+          save: { claimId: '$.row.claimIds.0' },
         },
         { api: '반품/교환 요청취소', bind: { orderId: '{{orderId}}', claimId: '{{claimId}}' } },
       ],

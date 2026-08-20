@@ -110,4 +110,121 @@ export const DEFAULT_FLOWS = [
       ],
     },
   },
+
+  // ── 앱: 주문/결제 ────────────────────────────────────────────────────────────
+  // 체크아웃은 장바구니 내용을 그대로 주문으로 만든다(요청 본문에 items 없음).
+  // 그래서 담기 → 체크아웃 순서가 필수다.
+  {
+    label: '주문 — 담기→체크아웃',
+    data: {
+      name: '주문 — 담기→체크아웃',
+      flow: [
+        { api: '고객 상품 목록 조회', save: { productId: '$.rows[saleStatus=ON_SALE]._id' } },
+        { api: '장바구니 담기', bind: { productId: '{{productId}}' }, values: { quantity: 1 } },
+        { api: '장바구니 조회' },
+        // orderer/shippingAddress 는 중첩 객체라 값을 미리 채워둔다. 주소만 바꿔 쓰면 된다.
+        {
+          api: '체크아웃 (주문 생성)',
+          values: {
+            orderer: { name: '홍길동', phone: '01012345678' },
+            shippingAddress: {
+              recipientName: '홍길동',
+              recipientPhone: '01012345678',
+              address: '서울시 강남구 테헤란로 1',
+              zipCode: '06000',
+              request: '부재시 문앞',
+            },
+          },
+          save: { orderId: '$.row.orderId', amount: '$.row.amount' },
+        },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+      ],
+    },
+  },
+  {
+    // 결제 승인은 PG(토스)에서 받은 paymentKey 가 있어야 한다 → 실행 중 입력창에서 넣는다.
+    // amount 는 직전 체크아웃 응답값이 아니라 목록에서 다시 집어온다(플로우 단독 실행 가능하게).
+    label: '주문 — 결제승인→구매확정',
+    data: {
+      name: '주문 — 결제승인→구매확정',
+      flow: [
+        { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId', amount: '$.rows.0.totalPaymentAmount' } },
+        { api: '결제 승인', bind: { orderId: '{{orderId}}', amount: '{{amount}}' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+        // orderItemIds 를 비우면 전체 라인 구매확정
+        { api: '구매확정', bind: { orderId: '{{orderId}}' } },
+      ],
+    },
+  },
+  {
+    label: '주문 — 배송 전 취소',
+    data: {
+      name: '주문 — 배송 전 취소',
+      flow: [
+        { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        { api: '배송 전 취소', bind: { orderId: '{{orderId}}' }, values: { reason: '단순 변심' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+      ],
+    },
+  },
+  {
+    // 배송완료(DELIVERED) 라인만 신청 가능하다.
+    // ⚠️ items[].orderItemId 는 앱 주문 상세 응답에 없어서 자동 바인딩이 안 된다 → 실행 중 직접 입력.
+    label: '주문 — 반품/교환 신청→취소',
+    data: {
+      name: '주문 — 반품/교환 신청→취소',
+      flow: [
+        { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+        {
+          api: '반품/교환 신청',
+          bind: { orderId: '{{orderId}}' },
+          values: { resolutionType: 'RETURN', reasonCode: 'DAMAGED', reasonText: '파손되어 도착' },
+          save: { claimId: '$.row.claimId' },
+        },
+        { api: '반품/교환 요청취소', bind: { orderId: '{{orderId}}', claimId: '{{claimId}}' } },
+      ],
+    },
+  },
+
+  // ── 앱: 조회 전용 ────────────────────────────────────────────────────────────
+  {
+    label: '상품 탐색',
+    data: {
+      name: '상품 탐색 (카테고리→목록→상세)',
+      flow: [
+        { api: '고객 카테고리 조회', save: { categoryId: '$.rows.0._id' } },
+        { api: '고객 상품 목록 조회', bind: { categoryId: '{{categoryId}}' }, save: { productId: '$.rows.0._id' } },
+        { api: '고객 상품 상세 조회', bind: { productId: '{{productId}}' } },
+      ],
+    },
+  },
+  {
+    // 인증 없이도 도는 앱 초기 로딩 묶음. 서버 기동/시드 확인용으로 가장 먼저 돌려보면 좋다.
+    label: '앱 초기 로딩',
+    data: {
+      name: '앱 초기 로딩 (버전/공지/배너/이벤트/약관)',
+      flow: [
+        { api: '앱버전 리스트 조회' },
+        { api: '고객 공지사항 조회' },
+        { api: '고객 배너 조회', save: { bannerId: '$.rows.0._id' } },
+        { api: '배너 조회수 증가', bind: { bannerId: '{{bannerId}}' } },
+        { api: '고객 이벤트 조회' },
+        { api: '고객 이용 약관 조회' },
+      ],
+    },
+  },
+  {
+    // 로그인 상태에서 실행. 정보 변경/푸시 설정은 본문이 비어 있어 실행 중 입력창이 뜬다.
+    label: '내 정보',
+    data: {
+      name: '내 정보 (세션→정보변경→푸시설정)',
+      flow: [
+        { api: '소비자 세션 조회' },
+        { api: '소비자 정보 변경' },
+        { api: '푸시 수신 상태 수정' },
+        { api: '소비자 세션 조회' },
+      ],
+    },
+  },
 ]

@@ -114,10 +114,14 @@ export const DEFAULT_FLOWS = [
   // ── 앱: 주문/결제 ────────────────────────────────────────────────────────────
   // 체크아웃은 장바구니 내용을 그대로 주문으로 만든다(요청 본문에 items 없음).
   // 그래서 담기 → 체크아웃 순서가 필수다.
+  // 토스 paymentKey 는 결제창에서만 나와 자동화가 못 태운다 → dev 는 'DEV-' 접두 키를
+  // PG 호출 없이 승인한다(서버 DevPaymentClient, prod 에는 주입 안 됨).
+  // 덕분에 담기부터 구매확정까지 한 플로우로 이어진다. 체크아웃이 준 orderId 를 그대로
+  // 결제에 넘기므로, 목록 첫 건을 집어오던 때와 달리 방금 만든 주문을 확실히 결제한다.
   {
-    label: '주문 — 담기→체크아웃',
+    label: '주문 — 담기→체크아웃→결제→구매확정',
     data: {
-      name: '주문 — 담기→체크아웃',
+      name: '주문 — 담기→체크아웃→결제→구매확정',
       flow: [
         { api: '고객 상품 목록 조회', save: { productId: '$.rows[saleStatus=ON_SALE]._id' } },
         { api: '장바구니 담기', bind: { productId: '{{productId}}' }, values: { quantity: 1 } },
@@ -137,19 +141,6 @@ export const DEFAULT_FLOWS = [
           },
           save: { orderId: '$.row.orderId', amount: '$.row.amount' },
         },
-        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
-      ],
-    },
-  },
-  {
-    // 토스 paymentKey 는 결제창에서만 나와 자동화가 못 태운다 → dev 는 'DEV-' 접두 키를
-    // PG 호출 없이 승인한다(서버 DevPaymentClient, prod 에는 주입 안 됨).
-    // amount 는 직전 체크아웃 응답값이 아니라 목록에서 다시 집어온다(플로우 단독 실행 가능하게).
-    label: '주문 — 결제승인→구매확정',
-    data: {
-      name: '주문 — 결제승인→구매확정',
-      flow: [
-        { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId', amount: '$.rows.0.totalPaymentAmount' } },
         {
           api: '결제 승인',
           bind: { orderId: '{{orderId}}', amount: '{{amount}}' },

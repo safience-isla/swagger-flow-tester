@@ -142,14 +142,19 @@ export const DEFAULT_FLOWS = [
     },
   },
   {
-    // 결제 승인은 PG(토스)에서 받은 paymentKey 가 있어야 한다 → 실행 중 입력창에서 넣는다.
+    // 토스 paymentKey 는 결제창에서만 나와 자동화가 못 태운다 → dev 는 'DEV-' 접두 키를
+    // PG 호출 없이 승인한다(서버 DevPaymentClient, prod 에는 주입 안 됨).
     // amount 는 직전 체크아웃 응답값이 아니라 목록에서 다시 집어온다(플로우 단독 실행 가능하게).
     label: '주문 — 결제승인→구매확정',
     data: {
       name: '주문 — 결제승인→구매확정',
       flow: [
         { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId', amount: '$.rows.0.totalPaymentAmount' } },
-        { api: '결제 승인', bind: { orderId: '{{orderId}}', amount: '{{amount}}' } },
+        {
+          api: '결제 승인',
+          bind: { orderId: '{{orderId}}', amount: '{{amount}}' },
+          values: { paymentKey: 'DEV-flow-tester' },
+        },
         { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
         // orderItemIds 를 비우면 전체 라인 구매확정
         { api: '구매확정', bind: { orderId: '{{orderId}}' } },

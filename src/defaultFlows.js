@@ -155,6 +155,30 @@ export const DEFAULT_FLOWS = [
     },
   },
   {
+    // 실 PG(토스) 로 태울 때 쓰는 플로우. DEV- 우회가 아니라 진짜 승인이다.
+    //
+    // paymentKey 는 결제창에서 사람이 카드를 넣어야 발급되므로 자동화가 못 만든다.
+    // 게다가 토스는 paymentKey+orderId+amount 를 묶어 검증해서, 미리 받아둔 키를
+    // 새 주문에 쓸 수 없다. 그래서 순서가 이렇게 된다:
+    //   1) '주문 — 담기→체크아웃→결제' 로 주문을 만들고 orderId/amount 를 확인
+    //   2) 결제위젯을 그 orderId/amount 로 열어 결제 → 리다이렉트 URL 에서 paymentKey 획득
+    //   3) 이 플로우를 돌리면서 결제 승인 스텝의 paymentKey 에 그 값을 붙여넣는다
+    // amount 는 목록에서 집어오므로 손댈 필요 없다.
+    label: '주문 — 실 PG 결제승인 (paymentKey 수동)',
+    data: {
+      name: '주문 — 실 PG 결제승인 (paymentKey 수동)',
+      flow: [
+        {
+          api: '내 주문 목록',
+          save: { orderId: '$.rows.0.orderId', amount: '$.rows.0.totalPaymentAmount' },
+        },
+        // paymentKey 는 일부러 비워둔다 — 실행 중 입력창에 붙여넣는다.
+        { api: '결제 승인', bind: { orderId: '{{orderId}}', amount: '{{amount}}' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+      ],
+    },
+  },
+  {
     // 선행조건: BOS 에서 해당 주문상품을 배송완료로 바꿔둬야 한다.
     // (관리자 > 주문 상세 > 상태값 변경 > 배송상태 = 배송완료)
     // 확정 대상이 없으면 ORDER_NOT_CONFIRMABLE 로 떨어진다.

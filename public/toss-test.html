@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>토스 테스트 결제위젯</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         margin: 0; padding: 24px; background: #0b0c10; color: #e8eaf0; }
+  .card { max-width: 620px; margin: 0 auto 16px; background: #15171f; border: 1px solid #262a36;
+          border-radius: 12px; padding: 22px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #9aa3b2; font-size: 13px; margin: 0 0 18px; line-height: 1.5; }
+  label { display: block; font-size: 12px; color: #8b93a4; margin: 14px 0 4px;
+          text-transform: uppercase; letter-spacing: .04em; }
+  input { width: 100%; box-sizing: border-box; background: #0f1117; color: #e8eaf0;
+          border: 1px solid #2a2f3d; border-radius: 6px; padding: 9px 10px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  button { margin-top: 16px; width: 100%; background: #2b6cff; color: #fff; border: 0;
+           border-radius: 8px; padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:disabled { background: #2a3350; color: #7b8398; cursor: not-allowed; }
+  .err { margin-top: 14px; color: #ff8b8b; font-size: 13px; white-space: pre-wrap; }
+  .ok { margin-top: 14px; color: #7fd894; font-size: 13px; }
+  .hint { margin-top: 18px; padding-top: 14px; border-top: 1px solid #232733;
+          color: #8b93a4; font-size: 12px; line-height: 1.6; }
+  code { color: #9fc4ff; }
+  /* 위젯은 자체 흰 배경으로 그려지므로 컨테이너만 잡아준다 */
+  #widget-area { max-width: 620px; margin: 0 auto; }
+  #payment-method, #agreement { background: #fff; border-radius: 12px; overflow: hidden; }
+  #agreement { margin-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>토스 테스트 결제위젯</h1>
+    <p class="sub">
+      이 서버의 주문을 실제 토스 테스트 결제로 태웁니다.<br />
+      승인 요청 후 토스가 <code>/api/v5/app/payments/success</code> 로 되돌아오고,
+      거기서 딥링크 결과 페이지에 <code>paymentKey</code> 가 찍힙니다.
+    </p>
+
+    <label>클라이언트 키 (test_gck_… — 브라우저에만 저장)</label>
+    <input id="ck" placeholder="test_gck_..." autocomplete="off" />
+
+    <label>orderId</label>
+    <input id="orderId" />
+
+    <label>결제 금액</label>
+    <input id="amount" />
+
+    <label>주문명</label>
+    <input id="orderName" />
+
+    <button id="load">위젯 불러오기</button>
+    <div class="err" id="err"></div>
+    <div class="ok" id="ok"></div>
+
+    <div class="hint">
+      테스트 카드는 위젯이 안내하는 값을 쓰면 됩니다. 실제 돈은 움직이지 않습니다.<br />
+      금액은 <b>주문의 결제금액과 정확히 일치</b>해야 합니다 — 서버가 승인 전에 대조하고
+      다르면 <code>amountMismatch</code> 로 거부합니다.
+    </div>
+  </div>
+
+  <div id="widget-area">
+    <div id="payment-method"></div>
+    <div id="agreement"></div>
+    <div class="card" style="margin-top:12px">
+      <button id="pay" disabled>결제하기</button>
+    </div>
+  </div>
+
+<script src="https://js.tosspayments.com/v2/standard"></script>
+<script>
+  // flow-tester 와 같은 오리진에서 서빙된다 → 하드코딩하지 않는다.
+  var API = location.origin;
+  var q = new URLSearchParams(location.search);
+  var $ = function (id) { return document.getElementById(id); };
+  var widgets = null;
+
+  // 클라이언트 키는 공개값이지만 굳이 파일에 남기지 않는다 — 브라우저에만 둔다.
+  $('ck').value = localStorage.getItem('tossCk') || '';
+  $('orderId').value = q.get('orderId') || '';
+  $('amount').value = q.get('amount') || '';
+  $('orderName').value = q.get('orderName') || '테스트 결제';
+
+  function fail(e) {
+    $('err').textContent = e && (e.code ? e.code + ': ' : '') + (e.message || e);
+    $('ok').textContent = '';
+  }
+
+  $('load').addEventListener('click', function () {
+    var ck = $('ck').value.trim();
+    var amount = Number($('amount').value);
+    if (!ck || !$('orderId').value.trim() || !amount) {
+      return fail('클라이언트 키 · orderId · 금액을 모두 채워주세요.');
+    }
+    localStorage.setItem('tossCk', ck);
+    $('err').textContent = '';
+
+    // gck/gsk 는 결제위젯 연동 키다. payment().requestPayment() 는 ck/sk 전용이라
+    // "결제위젯 연동 키는 지원하지 않습니다" 로 거부된다 → widgets() 를 쓴다.
+    try {
+      widgets = TossPayments(ck).widgets({ customerKey: 'qa-toss-test-01' });
+    } catch (e) { return fail(e); }
+
+    Promise.resolve()
+      .then(function () { return widgets.setAmount({ currency: 'KRW', value: amount }); })
+      .then(function () {
+        return Promise.all([
+          widgets.renderPaymentMethods({ selector: '#payment-method', variantKey: 'DEFAULT' }),
+          widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
+        ]);
+      })
+      .then(function () {
+        $('pay').disabled = false;
+        $('ok').textContent = '위젯 로드 완료. 아래에서 결제수단을 고르고 약관에 동의한 뒤 결제하기를 누르세요.';
+      })
+      .catch(function (e) {
+        // 약관 위젯 variantKey 는 상점 설정에 따라 다를 수 있다 → DEFAULT 로 한 번 더.
+        if (String(e && e.message).indexOf('agreement') !== -1) {
+          return widgets.renderAgreement({ selector: '#agreement', variantKey: 'DEFAULT' })
+            .then(function () { $('pay').disabled = false; $('ok').textContent = '위젯 로드 완료.'; })
+            .catch(fail);
+        }
+        fail(e);
+      });
+  });
+
+  $('pay').addEventListener('click', function () {
+    if (!widgets) return fail('먼저 위젯을 불러오세요.');
+    $('err').textContent = '';
+    widgets.requestPayment({
+      orderId: $('orderId').value.trim(),
+      orderName: $('orderName').value.trim() || '테스트 결제',
+      successUrl: API + '/api/v5/app/payments/success',
+      failUrl: API + '/api/v5/app/payments/fail',
+    }).catch(fail);
+  });
+</script>
+</body>
+</html>

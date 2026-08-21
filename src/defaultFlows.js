@@ -116,12 +116,16 @@ export const DEFAULT_FLOWS = [
   // 그래서 담기 → 체크아웃 순서가 필수다.
   // 토스 paymentKey 는 결제창에서만 나와 자동화가 못 태운다 → dev 는 'DEV-' 접두 키를
   // PG 호출 없이 승인한다(서버 DevPaymentClient, prod 에는 주입 안 됨).
-  // 덕분에 담기부터 구매확정까지 한 플로우로 이어진다. 체크아웃이 준 orderId 를 그대로
-  // 결제에 넘기므로, 목록 첫 건을 집어오던 때와 달리 방금 만든 주문을 확실히 결제한다.
+  // 체크아웃이 준 orderId 를 그대로 결제에 넘기므로, 목록 첫 건을 집어오던 때와 달리
+  // 방금 만든 주문을 확실히 결제한다.
+  //
+  // 구매확정은 여기 없다. 배송완료(shippingState=DELIVERED) 라인만 확정할 수 있는데
+  // 결제 직후는 상품준비중이고, 배송완료로 넘기는 건 BOS(관리자 인증) 몫이라
+  // 앱 플로우 안에서 이어붙일 수 없다. 아래 '구매확정' 플로우를 따로 쓴다.
   {
-    label: '주문 — 담기→체크아웃→결제→구매확정',
+    label: '주문 — 담기→체크아웃→결제',
     data: {
-      name: '주문 — 담기→체크아웃→결제→구매확정',
+      name: '주문 — 담기→체크아웃→결제',
       flow: [
         { api: '고객 상품 목록 조회', save: { productId: '$.rows[saleStatus=ON_SALE]._id' } },
         { api: '장바구니 담기', bind: { productId: '{{productId}}' }, values: { quantity: 1 } },
@@ -147,7 +151,20 @@ export const DEFAULT_FLOWS = [
           values: { paymentKey: 'DEV-flow-tester' },
         },
         { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
-        // orderItemIds 를 비우면 전체 라인 구매확정
+      ],
+    },
+  },
+  {
+    // 선행조건: BOS 에서 해당 주문상품을 배송완료로 바꿔둬야 한다.
+    // (관리자 > 주문 상세 > 상태값 변경 > 배송상태 = 배송완료)
+    // 확정 대상이 없으면 ORDER_NOT_CONFIRMABLE 로 떨어진다.
+    label: '주문 — 구매확정',
+    data: {
+      name: '주문 — 구매확정',
+      flow: [
+        { api: '내 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+        // orderItemIds 를 비우면 확정 가능한 전체 라인
         { api: '구매확정', bind: { orderId: '{{orderId}}' } },
       ],
     },

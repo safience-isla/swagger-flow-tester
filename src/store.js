@@ -995,9 +995,26 @@ export const useStore = create(
           }
 
           // params: values(리터럴 기본값) + bind(이전 스텝 응답값 연결)
+          //
+          // values 안의 {{var}} 도 use 헤더와 같은 규칙으로 치환한다. bind 는 파라미터
+          // 하나를 이전 응답에 통째로 잇는 것이라, 중첩 객체 속 한 필드만 변수로 채울 수가
+          // 없다(예: items:[{orderItemId:'{{orderItemId}}'}]). 그게 안 되면 그런 스텝은
+          // 매 실행마다 손으로 값을 넣어야 한다.
+          const subVars = (v) => {
+            if (typeof v === 'string') {
+              return v.replace(/\{\{(\w+)\}\}/g, (_, vName) =>
+                varRegistry[vName] ? `{${varRegistry[vName]}}` : `{{${vName}}}`
+              )
+            }
+            if (Array.isArray(v)) return v.map(subVars)
+            if (v && typeof v === 'object') {
+              return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, subVars(x)]))
+            }
+            return v
+          }
           const params = api.params.map(p => ({
             key: p.key,
-            val: item.values && p.key in item.values ? item.values[p.key] : '', // 리터럴 기본값(문자/불리언 등)
+            val: item.values && p.key in item.values ? subVars(item.values[p.key]) : '', // 리터럴 기본값(문자/불리언 등)
             binding: null,
           }))
           if (item.bind) {

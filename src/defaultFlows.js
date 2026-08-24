@@ -286,7 +286,7 @@ export const DEFAULT_FLOWS = [
         {
           api: '결제 승인',
           bind: { orderId: '{{orderId}}', amount: '{{amount}}' },
-          values: { paymentKey: 'DEV-flow-tester' },
+          values: { paymentKey: 'DEV-{{orderId}}' },
         },
         { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
       ],

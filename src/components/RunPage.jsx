@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useStore } from '../store'
-import { computeExecutionOrder, resolveTemplate } from '../flowUtils'
+import { computeExecutionOrder, resolveTemplate, resolveTemplateDeep } from '../flowUtils'
 import { normalizeUrl } from '../envUtils'
 import { Button, MethodBadge, Modal, FormGroup, Input } from './ui'
 import styles from './RunPage.module.css'
@@ -147,7 +147,8 @@ export default function RunPage({ onGoToFlow }) {
           let val
           if (p.binding) val = resolveBinding(p.binding) ?? p.val
           else if (typeof rawVal === 'string') val = resolveTemplate(rawVal, resolveBinding)
-          else val = rawVal // 리터럴 boolean/number 등 그대로 전송
+          // 중첩 객체·배열도 내부 문자열까지 치환한다(items/statuses 처럼 변수를 품는 값).
+          else val = resolveTemplateDeep(rawVal, resolveBinding)
           if (typeof val === 'string') {
             const t = val.trim()
             const ty = apiParamType(p.key)

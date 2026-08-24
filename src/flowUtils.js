@@ -11,6 +11,22 @@ export function resolveTemplate(str, resolveBinding) {
 }
 
 /**
+ * 객체·배열 안쪽 문자열까지 치환한다.
+ * 중첩 객체를 값으로 주는 파라미터(items, statuses 등)는 문자열이 아니라서
+ * resolveTemplate 만으로는 내부의 {stepN.path} 가 그대로 전송된다.
+ */
+export function resolveTemplateDeep(v, resolveBinding) {
+  if (typeof v === 'string') return resolveTemplate(v, resolveBinding)
+  if (Array.isArray(v)) return v.map(x => resolveTemplateDeep(x, resolveBinding))
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(
+      Object.entries(v).map(([k, x]) => [k, resolveTemplateDeep(x, resolveBinding)])
+    )
+  }
+  return v
+}
+
+/**
  * Compute execution order from flowSteps + connections.
  * If no connections: returns steps in Y-sorted order (top → bottom).
  * If connections exist: follows the connection chain, then appends isolated nodes.

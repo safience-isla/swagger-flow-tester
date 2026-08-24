@@ -6,6 +6,144 @@
 // 소셜 가입/로그인/연동/탈퇴/해제는 서버가 OAuth redirect-callback 을 소유하므로 플로우로
 // 자동화 불가 → 좌측 '소셜 로그인' 탭(SocialLoginPage)에서 실 OAuth 로 테스트한다.
 export const DEFAULT_FLOWS = [
+  // ── BOS(관리자) ──────────────────────────────────────────────────────────────
+  // 앱과 달리 BOS 는 로그인이 자동화된다 — dev 전용 서비스 계정 토큰 발급 API 가
+  // 이메일/휴대폰 인증과 OTP 를 건너뛰고 accessToken 을 바로 준다(운영에서는 404).
+  // 첫 스텝의 setAuth 로 BOS 모듈 전역 Authorization 이 세팅되므로, 이후 BOS 플로우는
+  // 로그인 스텝 없이 바로 돌릴 수 있다.
+  {
+    label: 'BOS — 로그인(서비스 계정)',
+    data: {
+      name: 'BOS — 로그인(서비스 계정)',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+      ],
+    },
+  },
+  {
+    label: 'BOS — 주문 목록→상세',
+    data: {
+      name: 'BOS — 주문 목록→상세',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+        { api: 'BOS 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        // 마스킹 해제로 원본 확인 — 개인정보 암복호가 정상인지 여기서 드러난다.
+        {
+          api: 'BOS 주문 상세',
+          bind: { orderId: '{{orderId}}' },
+          values: { maskSensitiveData: false },
+        },
+      ],
+    },
+  },
+  {
+    // 상태 상세 모달에 해당. statuses 로 여러 머신을 한 번에 바꾼다.
+    // 배열 순서대로 검증되므로 화면 순서(주문→배송→반품)로 넣는다.
+    label: 'BOS — 주문상품 상태 변경',
+    data: {
+      name: 'BOS — 주문상품 상태 변경',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+        { api: 'BOS 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        {
+          api: 'BOS 주문 상세',
+          bind: { orderId: '{{orderId}}' },
+          save: { orderItemId: '$.row.items.0.orderItemId' },
+        },
+        {
+          api: '주문상품 상태 변경',
+          bind: { orderId: '{{orderId}}' },
+          values: {
+            orderItemIds: ['{{orderItemId}}'],
+            statuses: [{ machine: 'SHIPPING', toValue: 'READY' }],
+          },
+        },
+      ],
+    },
+  },
+  {
+    label: 'BOS — 관리자 메모 CRUD',
+    data: {
+      name: 'BOS — 관리자 메모 CRUD',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+        { api: 'BOS 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        {
+          api: '관리자 메모 등록',
+          bind: { orderId: '{{orderId}}' },
+          values: { content: '플로우 테스트 메모' },
+          save: { memoId: '$.row.memoId' },
+        },
+        {
+          api: '관리자 메모 수정',
+          bind: { orderId: '{{orderId}}', memoId: '{{memoId}}' },
+          values: { content: '수정된 메모' },
+        },
+        { api: '관리자 메모 목록', bind: { orderId: '{{orderId}}' } },
+        {
+          api: '관리자 메모 삭제',
+          bind: { orderId: '{{orderId}}', memoId: '{{memoId}}' },
+        },
+      ],
+    },
+  },
+  {
+    // 송장이 없으면 CJ 를 부르지 않고 사유를 돌려준다(정상). 송장은 배송 편집으로 넣는다.
+    label: 'BOS — 배송 송장입력→상태갱신(CJ)',
+    data: {
+      name: 'BOS — 배송 송장입력→상태갱신(CJ)',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+        { api: 'BOS 주문 목록', save: { orderId: '$.rows.0.orderId' } },
+        {
+          api: 'BOS 주문 상세',
+          bind: { orderId: '{{orderId}}' },
+          save: { deliveryId: '$.row.deliveries.0.deliveryId' },
+        },
+        {
+          api: '배송/송장 편집',
+          bind: { orderId: '{{orderId}}', deliveryId: '{{deliveryId}}' },
+          values: { trackingNo: '000000000000' },
+        },
+        {
+          api: '배송상태 즉시 갱신 (CJ 조회)',
+          bind: { orderId: '{{orderId}}', deliveryId: '{{deliveryId}}' },
+        },
+      ],
+    },
+  },
+  {
+    label: 'BOS — 상품 목록→상세',
+    data: {
+      name: 'BOS — 상품 목록→상세',
+      flow: [
+        {
+          api: '[DEV] 서비스 계정 토큰 발급 (자동화용, 운영 제거 대상)',
+          setAuth: { Authorization: '$.row.accessToken' },
+        },
+        { api: '상품 목록 조회', save: { productId: '$.rows.0._id' } },
+        { api: '상품 상세 조회', bind: { productId: '{{productId}}' } },
+        { api: '카테고리 목록 조회' },
+      ],
+    },
+  },
+
+
   {
     // 인증 필요 → '소셜 로그인' 탭에서 로그인해 accessToken 확보 후 전역 Authorization 세팅.
     label: '장바구니',

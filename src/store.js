@@ -81,8 +81,14 @@ async function fetchSwaggerApis(baseUrl, moduleId) {
     }
   }
 
-  const candidates = ['/v3/api-docs', '/api-docs-json', '/v2/api-docs', '/api-docs', '/swagger.json', '/api/app-docs-json']
-  
+  // 문서 URL 을 직접 준 경우(예: .../api/admin-docs-json)는 그걸 먼저 그대로 시도한다.
+  // 후보 목록만 돌면 같은 오리진의 두 번째 문서(BOS)를 가리킬 방법이 없다.
+  const looksLikeDoc = /(-json|\.json)$/i.test(cleanBase) || /api-docs/i.test(cleanBase)
+  const candidates = [
+    ...(looksLikeDoc ? [''] : []),
+    '/v3/api-docs', '/api-docs-json', '/v2/api-docs', '/api-docs', '/swagger.json', '/api/app-docs-json',
+  ]
+
   for (const path of candidates) {
     const url = cleanBase + path
     try {
@@ -501,18 +507,32 @@ export const useStore = create(
         set({ modules, savedFlows, envs, activeEnvId, apiPresets, supaStatus: 'ok',
           flowSteps: validFlowSteps, connections: validConnections })
 
-        // 기본 모듈 시드: 등록된 모듈이 없으면 현재 origin(= same-origin API 서버)을 자동 등록.
+        // 기본 모듈 시드: 현재 origin(= same-origin API 서버)을 자동 등록.
         // dev(/flow-tester/)·로컬 어디서 열어도 window.location.origin 이 곧 API 호스트라 바로 연결됨.
         // ponytail: origin 기반이라 하드코딩 없음. 다른 백엔드에 쓰려면 이 모듈을 지우거나 URL 수정.
-        if (modules.length === 0 && typeof window !== 'undefined' && window.location?.origin) {
-          await get().addModule('mobis-app', window.location.origin)
-          // 이전 세션의 인증 헤더 값(토큰) 복원 → 새로고침 후에도 전역 Authorization 유지
-          const seeded = get().modules.find(m => m.name === 'mobis-app')
-          const prevAuths = prevAuthsByName.get('mobis-app')
-          if (seeded && prevAuths) {
-            prevAuths.forEach(a => { if (a.key && a.val) get().setModuleAuthValue(seeded.id, a.key, a.val) })
+        //
+        // 이름별로 없는 것만 채운다. 'modules.length === 0' 으로 묶어두면 이미 app 모듈을
+        // 쓰던 사람에게 나중에 추가한 BOS 모듈이 영영 안 생긴다.
+        if (typeof window !== 'undefined' && window.location?.origin) {
+          const origin = window.location.origin
+          const seeds = [
+            { name: 'mobis-app', url: origin },
+            // BOS 는 같은 오리진의 다른 문서라 URL 을 직접 준다(후보 탐색은 app 문서를 먼저 잡는다).
+            { name: 'mobis-bos', url: origin + '/api/admin-docs-json' },
+          ]
+          let added = false
+          for (const { name, url } of seeds) {
+            if (get().modules.some(m => m.name === name)) continue
+            await get().addModule(name, url)
+            added = true
+            // 이전 세션의 인증 헤더 값(토큰) 복원 → 새로고침 후에도 전역 Authorization 유지
+            const seeded = get().modules.find(m => m.name === name)
+            const prevAuths = prevAuthsByName.get(name)
+            if (seeded && prevAuths) {
+              prevAuths.forEach(a => { if (a.key && a.val) get().setModuleAuthValue(seeded.id, a.key, a.val) })
+            }
           }
-          get().seedDefaultFlows() // 모듈 apis 로드 후 기본 플로우(회원가입/로그인) 저장
+          if (added) get().seedDefaultFlows() // 모듈 apis 로드 후 기본 플로우 저장
         }
       },
 

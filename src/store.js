@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { resolveVars, normalizeUrl } from './envUtils'
 import { supabase } from './supabase'
-import { DEFAULT_FLOWS } from './defaultFlows'
+import { DEFAULT_FLOWS, DEFAULT_FLOWS_VERSION } from './defaultFlows'
 
 // ── Supabase sync helpers (fire-and-forget) ──────────────────────────────────
 function sbUpsertModule(m, cid) {
@@ -538,15 +538,24 @@ export const useStore = create(
 
       // 기본 플로우(회원가입/로그인)를 저장된 플로우에 시드. 이미 있으면 건너뜀.
       seedDefaultFlows: () => {
+        // 정의 버전이 올라갔으면 같은 이름의 저장본을 다시 만든다.
+        // {{var}} 는 저장 시점에 굳어서, 덮어쓰지 않으면 정의를 고쳐도 반영되지 않는다.
+        const seededVersion = Number(
+          (typeof localStorage !== 'undefined' && localStorage.getItem('defaultFlowsVersion')) || 0
+        )
+        const stale = seededVersion < DEFAULT_FLOWS_VERSION
         const existing = new Set(get().savedFlows.map(f => f.name))
-        const toSeed = DEFAULT_FLOWS.filter(f => !existing.has(f.data.name))
+        const toSeed = stale ? DEFAULT_FLOWS : DEFAULT_FLOWS.filter(f => !existing.has(f.data.name))
         if (toSeed.length === 0) return
         const prev = { steps: get().flowSteps, connections: get().connections, name: get().flowName }
         for (const f of toSeed) {
           const res = get().importFlow(f.data) // 현재 모듈 apis 기준으로 resolve → flowSteps 세팅
-          if (res?.ok) get().saveFlow(f.data.name)
+          if (res?.ok) get().saveFlow(f.data.name) // 같은 이름이면 덮어쓴다
         }
         set({ flowSteps: prev.steps, connections: prev.connections, flowName: prev.name }) // 빌더 원복
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('defaultFlowsVersion', String(DEFAULT_FLOWS_VERSION))
+        }
       },
 
       // ── Modules ───────────────────────────────────────────────────────────

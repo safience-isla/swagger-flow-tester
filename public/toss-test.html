@@ -40,8 +40,10 @@
     <label>클라이언트 키 (test_gck_… · 브라우저에만 저장)</label>
     <input id="ck" placeholder="test_gck_..." autocomplete="off" />
 
-    <label>고객 accessToken (앱 로그인 토큰 · 브라우저에만 저장)</label>
-    <input id="tok" placeholder="flow-tester 소셜 로그인 탭에서 복사" autocomplete="off" />
+    <label>고객 accessToken</label>
+    <input id="tok" placeholder="flow-tester 에 로그인돼 있으면 자동으로 채워집니다" autocomplete="off" />
+    <button class="ghost" id="pull" style="margin-top:8px">flow-tester 로그인 토큰 가져오기</button>
+    <div class="msg" id="m0"></div>
   </div>
 
   <div class="card">
@@ -100,6 +102,11 @@
     el.addEventListener('change', function () { localStorage.setItem('tt_' + k, el.value); });
   });
 
+  if (!$('tok').value) {
+    var auto = pullToken();
+    if (auto) { $('tok').value = auto; localStorage.setItem('tt_tok', auto); }
+  }
+
   // 리다이렉트로 돌아온 경우 paymentKey 를 자동으로 받아둔다 — 손으로 옮길 일이 준다.
   (function () {
     var q = new URLSearchParams(location.search);
@@ -112,6 +119,36 @@
   })();
 
   function say(id, text, cls) { var e = $(id); e.className = 'msg ' + (cls || 'dim'); e.textContent = text; }
+
+  /**
+   * flow-tester 와 같은 오리진이라 저장소를 그대로 읽을 수 있다.
+   * 소셜 로그인 탭에서 로그인하면 모듈 전역 Authorization 에 토큰이 들어가므로,
+   * 그 값을 가져오면 사용자가 토큰을 옮겨적을 일이 없다.
+   */
+  function pullToken() {
+    try {
+      var raw = localStorage.getItem('swagger-flow-tester');
+      if (!raw) return null;
+      var mods = (JSON.parse(raw).state || {}).modules || [];
+      for (var i = 0; i < mods.length; i++) {
+        var auths = mods[i].auths || [];
+        for (var j = 0; j < auths.length; j++) {
+          if (auths[j].key === 'Authorization' && auths[j].val) {
+            return String(auths[j].val).replace(/^Bearer\s+/i, '').trim();
+          }
+        }
+      }
+    } catch (e) { /* 저장 형식이 바뀌었을 수 있다 — 수동 입력으로 넘긴다 */ }
+    return null;
+  }
+
+  $('pull').addEventListener('click', function () {
+    var t = pullToken();
+    if (!t) return say('m0', 'flow-tester 에 저장된 토큰이 없습니다. 소셜 로그인 탭에서 먼저 로그인하세요.', 'err');
+    $('tok').value = t;
+    localStorage.setItem('tt_tok', t);
+    say('m0', '가져왔습니다.', 'ok');
+  });
 
   function api(path, opts) {
     var tok = $('tok').value.trim();

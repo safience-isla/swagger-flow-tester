@@ -3,106 +3,157 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>토스 테스트 결제위젯</title>
+<title>토스 실결제 테스트</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          margin: 0; padding: 24px; background: #0b0c10; color: #e8eaf0; }
-  .card { max-width: 620px; margin: 0 auto 16px; background: #15171f; border: 1px solid #262a36;
-          border-radius: 12px; padding: 22px; }
+  .card { max-width: 640px; margin: 0 auto 14px; background: #15171f; border: 1px solid #262a36;
+          border-radius: 12px; padding: 20px 22px; }
   h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: #9aa3b2; font-size: 13px; margin: 0 0 18px; line-height: 1.5; }
-  label { display: block; font-size: 12px; color: #8b93a4; margin: 14px 0 4px;
+  h2 { font-size: 14px; margin: 0 0 10px; color: #9fc4ff; }
+  .sub { color: #9aa3b2; font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+  label { display: block; font-size: 12px; color: #8b93a4; margin: 12px 0 4px;
           text-transform: uppercase; letter-spacing: .04em; }
   input { width: 100%; box-sizing: border-box; background: #0f1117; color: #e8eaf0;
           border: 1px solid #2a2f3d; border-radius: 6px; padding: 9px 10px;
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-  button { margin-top: 16px; width: 100%; background: #2b6cff; color: #fff; border: 0;
-           border-radius: 8px; padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button { margin-top: 12px; width: 100%; background: #2b6cff; color: #fff; border: 0;
+           border-radius: 8px; padding: 11px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button.ghost { background: #232a3d; color: #cfd6e6; }
   button:disabled { background: #2a3350; color: #7b8398; cursor: not-allowed; }
-  .err { margin-top: 14px; color: #ff8b8b; font-size: 13px; white-space: pre-wrap; }
-  .ok { margin-top: 14px; color: #7fd894; font-size: 13px; }
-  .hint { margin-top: 18px; padding-top: 14px; border-top: 1px solid #232733;
-          color: #8b93a4; font-size: 12px; line-height: 1.6; }
+  .msg { margin-top: 12px; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+  .err { color: #ff8b8b; } .ok { color: #7fd894; } .dim { color: #8b93a4; }
+  .step { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center;
+          border-radius: 50%; background: #2b6cff; color: #fff; font-size: 12px; margin-right: 6px; }
   code { color: #9fc4ff; }
-  /* 위젯은 자체 흰 배경으로 그려지므로 컨테이너만 잡아준다 */
-  #widget-area { max-width: 620px; margin: 0 auto; }
-  #payment-method, #agreement { background: #fff; border-radius: 12px; overflow: hidden; }
-  #agreement { margin-top: 12px; }
+  #payment-method, #agreement { background: #fff; border-radius: 12px; overflow: hidden; margin-top: 10px; }
 </style>
 </head>
 <body>
   <div class="card">
-    <h1>토스 테스트 결제위젯</h1>
+    <h1>토스 실결제 테스트</h1>
     <p class="sub">
-      이 서버의 주문을 실제 토스 테스트 결제로 태웁니다.<br />
-      승인 요청 후 토스가 <code>/api/v5/app/payments/success</code> 로 되돌아오고,
-      거기서 딥링크 결과 페이지에 <code>paymentKey</code> 가 찍힙니다.
+      실제 토스 결제창을 띄워 승인까지 태웁니다. <code>DEV-</code> 우회가 아니라 진짜 PG 왕복입니다.<br />
+      결제창 → 서버 리다이렉트(<code>/api/v5/app/payments/success</code>) → 승인까지 이 페이지에서 끝납니다.
     </p>
 
-    <label>클라이언트 키 (test_gck_… — 브라우저에만 저장)</label>
+    <label>클라이언트 키 (test_gck_… · 브라우저에만 저장)</label>
     <input id="ck" placeholder="test_gck_..." autocomplete="off" />
+
+    <label>고객 accessToken (앱 로그인 토큰 · 브라우저에만 저장)</label>
+    <input id="tok" placeholder="flow-tester 소셜 로그인 탭에서 복사" autocomplete="off" />
+  </div>
+
+  <div class="card">
+    <h2><span class="step">1</span> 미결제 주문 불러오기</h2>
+    <p class="sub" style="margin-bottom:6px">
+      결제 대기 상태(<code>ORDER_RECEIVED</code>)인 최근 주문을 찾아 채웁니다.<br />
+      없으면 flow-tester 의 <b>주문 — 담기→체크아웃 (결제 대기)</b> 플로우로 하나 만드세요.
+    </p>
+    <button class="ghost" id="load">미결제 주문 불러오기</button>
 
     <label>orderId</label>
     <input id="orderId" />
-
     <label>결제 금액</label>
     <input id="amount" />
-
     <label>주문명</label>
     <input id="orderName" />
-
-    <button id="load">위젯 불러오기</button>
-    <div class="err" id="err"></div>
-    <div class="ok" id="ok"></div>
-
-    <div class="hint">
-      테스트 카드는 위젯이 안내하는 값을 쓰면 됩니다. 실제 돈은 움직이지 않습니다.<br />
-      금액은 <b>주문의 결제금액과 정확히 일치</b>해야 합니다 — 서버가 승인 전에 대조하고
-      다르면 <code>amountMismatch</code> 로 거부합니다.
-    </div>
+    <div class="msg" id="m1"></div>
   </div>
 
-  <div id="widget-area">
+  <div class="card">
+    <h2><span class="step">2</span> 결제창 열기</h2>
+    <p class="sub" style="margin-bottom:6px">
+      결제수단·약관을 고르고 결제하면 토스가 서버로 되돌려보내고,
+      결과 페이지 주소에 <code>paymentKey</code> 가 실려 옵니다. 그 값을 3번에 붙여넣으세요.
+    </p>
+    <button id="widget">위젯 불러오기</button>
     <div id="payment-method"></div>
     <div id="agreement"></div>
-    <div class="card" style="margin-top:12px">
-      <button id="pay" disabled>결제하기</button>
-    </div>
+    <button id="pay" disabled>결제하기</button>
+    <div class="msg" id="m2"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">3</span> 승인 처리</h2>
+    <p class="sub" style="margin-bottom:6px">
+      앱이 하는 일과 같습니다 — 받은 <code>paymentKey</code> 로
+      <code>POST /orders/{orderId}/payment/confirm</code> 을 호출합니다.
+      승인이 끝나야 실제로 결제된 것입니다.
+    </p>
+    <label>paymentKey</label>
+    <input id="pk" placeholder="리다이렉트 주소에서 복사" autocomplete="off" />
+    <button id="confirm">승인 요청</button>
+    <div class="msg" id="m3"></div>
   </div>
 
 <script src="https://js.tosspayments.com/v2/standard"></script>
 <script>
-  // flow-tester 와 같은 오리진에서 서빙된다 → 하드코딩하지 않는다.
   var API = location.origin;
-  var q = new URLSearchParams(location.search);
   var $ = function (id) { return document.getElementById(id); };
   var widgets = null;
 
-  // 클라이언트 키는 공개값이지만 굳이 파일에 남기지 않는다 — 브라우저에만 둔다.
-  $('ck').value = localStorage.getItem('tossCk') || '';
-  $('orderId').value = q.get('orderId') || '';
-  $('amount').value = q.get('amount') || '';
-  $('orderName').value = q.get('orderName') || '테스트 결제';
+  // 페이지를 오갈 때 값이 날아가지 않게. 토큰·키는 브라우저에만 둔다.
+  ['ck', 'tok', 'orderId', 'amount', 'orderName', 'pk'].forEach(function (k) {
+    var el = $(k);
+    el.value = localStorage.getItem('tt_' + k) || '';
+    el.addEventListener('change', function () { localStorage.setItem('tt_' + k, el.value); });
+  });
 
-  function fail(e) {
-    $('err').textContent = e && (e.code ? e.code + ': ' : '') + (e.message || e);
-    $('ok').textContent = '';
+  // 리다이렉트로 돌아온 경우 paymentKey 를 자동으로 받아둔다 — 손으로 옮길 일이 준다.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get('paymentKey')) {
+      $('pk').value = q.get('paymentKey');
+      if (q.get('orderId')) $('orderId').value = q.get('orderId');
+      if (q.get('amount')) $('amount').value = q.get('amount');
+      say('m3', '리다이렉트에서 paymentKey 를 받았습니다. 승인 요청을 누르세요.', 'ok');
+    }
+  })();
+
+  function say(id, text, cls) { var e = $(id); e.className = 'msg ' + (cls || 'dim'); e.textContent = text; }
+
+  function api(path, opts) {
+    var tok = $('tok').value.trim();
+    return fetch(API + path, Object.assign({
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        tok ? { Authorization: 'Bearer ' + tok } : {}
+      ),
+    }, opts || {})).then(function (r) {
+      return r.json().then(function (b) { return { status: r.status, body: b }; });
+    });
   }
 
   $('load').addEventListener('click', function () {
-    var ck = $('ck').value.trim();
-    var amount = Number($('amount').value);
-    if (!ck || !$('orderId').value.trim() || !amount) {
-      return fail('클라이언트 키 · orderId · 금액을 모두 채워주세요.');
-    }
-    localStorage.setItem('tossCk', ck);
-    $('err').textContent = '';
+    if (!$('tok').value.trim()) return say('m1', '고객 accessToken 을 먼저 넣어주세요.', 'err');
+    say('m1', '조회 중…');
+    api('/api/v5/app/orders?page=1&limit=20').then(function (r) {
+      if (r.status !== 200) return say('m1', 'HTTP ' + r.status + '\n' + JSON.stringify(r.body), 'err');
+      var rows = r.body.rows || [];
+      var pending = rows.filter(function (o) { return o.representativeStatus === 'ORDER_RECEIVED'; });
+      if (!pending.length) {
+        return say('m1', '결제 대기 주문이 없습니다. flow-tester 의 "주문 — 담기→체크아웃 (결제 대기)" 를 먼저 실행하세요.', 'err');
+      }
+      var o = pending[0];
+      $('orderId').value = o.orderId;
+      $('amount').value = o.totalPaymentAmount;
+      $('orderName').value = o.orderName || '테스트 결제';
+      ['orderId', 'amount', 'orderName'].forEach(function (k) { localStorage.setItem('tt_' + k, $(k).value); });
+      say('m1', '불러왔습니다 — ' + o.orderId + ' / ' + o.totalPaymentAmount + '원 (대기 ' + pending.length + '건)', 'ok');
+    }).catch(function (e) { say('m1', String(e), 'err'); });
+  });
 
-    // gck/gsk 는 결제위젯 연동 키다. payment().requestPayment() 는 ck/sk 전용이라
-    // "결제위젯 연동 키는 지원하지 않습니다" 로 거부된다 → widgets() 를 쓴다.
-    try {
-      widgets = TossPayments(ck).widgets({ customerKey: 'qa-toss-test-01' });
-    } catch (e) { return fail(e); }
+  $('widget').addEventListener('click', function () {
+    var ck = $('ck').value.trim(), amount = Number($('amount').value);
+    if (!ck || !$('orderId').value.trim() || !amount) return say('m2', '클라이언트 키·orderId·금액이 필요합니다.', 'err');
+    if (ck.indexOf('gck') === -1) {
+      return say('m2', '이 서버의 시크릿 키는 test_gsk_ 입니다. 짝이 되는 클라이언트 키는 test_gck_ 여야 합니다.', 'err');
+    }
+    localStorage.setItem('tt_ck', ck);
+    say('m2', '위젯 로드 중…');
+    try { widgets = TossPayments(ck).widgets({ customerKey: 'toss-test-page' }); }
+    catch (e) { return say('m2', String(e && e.message || e), 'err'); }
 
     Promise.resolve()
       .then(function () { return widgets.setAmount({ currency: 'KRW', value: amount }); })
@@ -112,30 +163,40 @@
           widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
         ]);
       })
-      .then(function () {
-        $('pay').disabled = false;
-        $('ok').textContent = '위젯 로드 완료. 아래에서 결제수단을 고르고 약관에 동의한 뒤 결제하기를 누르세요.';
-      })
+      .then(function () { $('pay').disabled = false; say('m2', '결제수단과 약관을 고른 뒤 결제하기를 누르세요.', 'ok'); })
       .catch(function (e) {
-        // 약관 위젯 variantKey 는 상점 설정에 따라 다를 수 있다 → DEFAULT 로 한 번 더.
         if (String(e && e.message).indexOf('agreement') !== -1) {
           return widgets.renderAgreement({ selector: '#agreement', variantKey: 'DEFAULT' })
-            .then(function () { $('pay').disabled = false; $('ok').textContent = '위젯 로드 완료.'; })
-            .catch(fail);
+            .then(function () { $('pay').disabled = false; say('m2', '위젯 로드 완료.', 'ok'); })
+            .catch(function (e2) { say('m2', String(e2 && e2.message || e2), 'err'); });
         }
-        fail(e);
+        say('m2', String(e && e.message || e), 'err');
       });
   });
 
   $('pay').addEventListener('click', function () {
-    if (!widgets) return fail('먼저 위젯을 불러오세요.');
-    $('err').textContent = '';
+    if (!widgets) return say('m2', '먼저 위젯을 불러오세요.', 'err');
+    // successUrl 은 서버 리다이렉트 라우트를 거친다 — 실제 앱이 타는 경로를 그대로 검증한다.
     widgets.requestPayment({
       orderId: $('orderId').value.trim(),
       orderName: $('orderName').value.trim() || '테스트 결제',
       successUrl: API + '/api/v5/app/payments/success',
       failUrl: API + '/api/v5/app/payments/fail',
-    }).catch(fail);
+    }).catch(function (e) { say('m2', String(e && (e.code ? e.code + ': ' : '') + (e.message || e)), 'err'); });
+  });
+
+  $('confirm').addEventListener('click', function () {
+    var pk = $('pk').value.trim(), orderId = $('orderId').value.trim(), amount = Number($('amount').value);
+    if (!pk || !orderId || !amount) return say('m3', 'paymentKey·orderId·금액이 필요합니다.', 'err');
+    localStorage.setItem('tt_pk', pk);
+    say('m3', '승인 요청 중…');
+    api('/api/v5/app/orders/' + orderId + '/payment/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ paymentKey: pk, amount: amount }),
+    }).then(function (r) {
+      if (r.status !== 200) return say('m3', 'HTTP ' + r.status + '\n' + JSON.stringify(r.body, null, 2), 'err');
+      say('m3', '승인 완료 — 대표상태 ' + (r.body.row && r.body.row.representativeStatus), 'ok');
+    }).catch(function (e) { say('m3', String(e), 'err'); });
   });
 </script>
 </body>

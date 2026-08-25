@@ -13,7 +13,7 @@
  * (실제로 반품/교환 플로우가 치환 안 된 채 계속 400 이 났다).
  * 사용자가 만든 플로우는 이름이 달라 영향받지 않는다.
  */
-export const DEFAULT_FLOWS_VERSION = 2
+export const DEFAULT_FLOWS_VERSION = 3
 
 export const DEFAULT_FLOWS = [
   // ── BOS(관리자) ──────────────────────────────────────────────────────────────
@@ -270,6 +270,34 @@ export const DEFAULT_FLOWS = [
   // 구매확정은 여기 없다. 배송완료(shippingState=DELIVERED) 라인만 확정할 수 있는데
   // 결제 직후는 상품준비중이고, 배송완료로 넘기는 건 BOS(관리자 인증) 몫이라
   // 앱 플로우 안에서 이어붙일 수 없다. 아래 '구매확정' 플로우를 따로 쓴다.
+  {
+    // 토스 실결제 테스트용 — 결제를 하지 않고 '결제 대기' 주문만 남긴다.
+    // 아래 '담기→체크아웃→결제' 는 DEV- 우회로 바로 결제해버려서 실결제로 태울 주문이 없다.
+    // 이걸 돌린 뒤 /flow-tester/toss-test.html 에서 '미결제 주문 불러오기' 를 누르면 이어진다.
+    label: '주문 — 담기→체크아웃 (결제 대기)',
+    data: {
+      name: '주문 — 담기→체크아웃 (결제 대기)',
+      flow: [
+        { api: '고객 상품 목록 조회', save: { productId: '$.rows[saleStatus=ON_SALE]._id' } },
+        { api: '장바구니 담기', bind: { productId: '{{productId}}' }, values: { quantity: 1 } },
+        {
+          api: '체크아웃 (주문 생성)',
+          values: {
+            orderer: { name: '홍길동', phone: '01012345678' },
+            shippingAddress: {
+              recipientName: '홍길동',
+              recipientPhone: '01012345678',
+              address: '서울시 강남구 테헤란로 1',
+              zipCode: '06000',
+              request: '부재시 문앞',
+            },
+          },
+          save: { orderId: '$.row.orderId', amount: '$.row.amount' },
+        },
+        { api: '주문 상세', bind: { orderId: '{{orderId}}' } },
+      ],
+    },
+  },
   {
     label: '주문 — 담기→체크아웃→결제',
     data: {
